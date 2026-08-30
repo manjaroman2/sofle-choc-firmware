@@ -36,3 +36,7 @@ program: $(TARGET).hex
 
 program-eeprom: $(TARGET).hex $(TARGET).eep
 	avrdude -p $(MCU) -c avr109 -P /dev/ttyACM0 -D -U flash:w:$(TARGET).hex:i -U eeprom:w:$(TARGET).eep:i
+
+hidsend: hidsend.c
+	gcc -O2 -Wall -Wextra -o $@ $<
+

@@ -1,3 +1,5 @@
+__pycache__/
+.nvim.lua
 .clang-*
 obj/
 .cache/

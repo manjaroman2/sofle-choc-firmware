@@ -1,7 +1,13 @@
 #include "Keyboard.h"
+#include "twi.h"
 #include "LUFA/Drivers/Board/LEDs.h"
 
 #include <avr/eeprom.h>
+
+#define OLED_128x32
+#include "./oled.h"
+
+#include "font/font.h"
 
 #define ROWS 5
 #define COLS 6
@@ -25,12 +31,54 @@ static uint8_t Layout[ROWS][COLS];
 static uint8_t KeyQueue[6];
 static uint8_t KeyQueueSize;
 
+static uint8_t oled_test(void)
+{
+  static const uint8_t init_seq[] = {
+      0xAE,                     // display off
+      0xD5, 0x80,               // clock divide
+      0xA8, OLED_OP_MULTIPLEX,  // multiplex ratio
+      0xD3, 0x00,               // display offset
+      0x40,                     // start line 0
+      0x8D, 0x14,               // charge pump enable
+      0x20, 0x00,               // addressing mode (0x00 for horizontal addressing mode)
+      0xA1,                     // segment remap
+      0xC8,                     // COM scan direction
+      0xDA, OLED_OP_COM,        // COM pins
+      0x81, 0x8F,               // contrast
+      0xD9, 0xF1,               // precharge
+      0xDB, 0x40,               // VCOMH deselect
+      0xA5,                     // entire display ON (ignore RAM) <-- the actual test
+      0xAF                      // display on
+  };
+  for(size_t i = 0; i < sizeof(init_seq); i++)
+    CHECK(oled_write_cmd(init_seq[i]));
+  return 0;
+}
+
+
 int main(void)
 {
   SetupHardware();
 
   LEDs_SetAllLEDs(LEDMASK_USB_NOTREADY);
   GlobalInterruptEnable();
+
+  uint8_t oled_ok = oled_test();
+  ERR_HANG(oled_ok);
+
+  // back to ram display
+  oled_ok = oled_write_cmd(0xA4);
+  ERR_HANG(oled_ok);
+
+  oled_ok = oled_clear();
+  ERR_HANG(oled_ok);
+
+  oled_ok = print_Text("Hello World!");
+  ERR_HANG(oled_ok);
+
+  // turn display on
+  // oled_ok = oled_write_cmd(0xAF);
+  // ERR_HANG(oled_ok);
 
   for(;;)
   {
@@ -70,6 +118,25 @@ void SetupHardware()
   E6  7
   B4  8
   B5  9
+
+  encoder:
+  F4  A3
+  F5  A2
+
+  trss serial:
+  D2  RX
+
+  leds ws2812
+  D3  TX
+
+  oled I2C:
+  D1  2 (SDA)
+  D0  3 (SCL)
+
+  free pins:
+  D4  4
+
+
   */
 
   // set columns to input
@@ -93,6 +160,8 @@ void SetupHardware()
   PORTB |= ((1 << PB4) | (1 << PB5));
 
   eeprom_read_block(Layout, EEPROM_Layout, sizeof(Layout));
+
+  twi_init();
 }
 
 static void test_row(USB_KeyboardReport_Data_t* KeyboardReport, uint8_t row)

@@ -7,9 +7,9 @@ F_CPU        = 16000000
 F_USB        = $(F_CPU)
 OPTIMIZATION = s
 TARGET       = Keyboard
-SRC          = $(TARGET).c Descriptors.c $(LUFA_SRC_USB) $(LUFA_SRC_USBCLASS)
+SRC          = src/$(TARGET).c src/Descriptors.c src/twi.c src/utils.c src/font/decoder.c src/font/chars.c $(LUFA_SRC_USB) $(LUFA_SRC_USBCLASS)
 LUFA_PATH    = lufa/LUFA
-CC_FLAGS     = -DUSE_LUFA_CONFIG_HEADER -IConfig/ -flto -ffunction-sections -fdata-sections
+CC_FLAGS     = -DUSE_LUFA_CONFIG_HEADER -IConfig/ -Isrc/ -flto -ffunction-sections -fdata-sections -DFONT_COMPRESSED
 LD_FLAGS     = -flto -Wl,--gc-sections -Wl,--relax
 COMPILER_PATH = ../avr-gcc-16.1.0-x64-linux/bin/
 
@@ -30,6 +30,11 @@ include $(DMBS_PATH)/gcc.mk
 include $(DMBS_PATH)/hid.mk
 include $(DMBS_PATH)/avrdude.mk
 include $(DMBS_PATH)/atprogram.mk
+
+.PHONY: font
+
+font: src/font/make_font.py
+	python -u src/font/make_font.py src/font src/font
 
 program: $(TARGET).hex
 	avrdude -p $(MCU) -c avr109 -P /dev/ttyACM0 -D -U flash:w:$(TARGET).hex:i

@@ -1,10 +1,3 @@
-/** \file
- *
- *  USB Device Descriptors, for library use when in USB device mode. Descriptors are special
- *  computer-readable structures which the host requests upon device enumeration, to determine
- *  the device's capabilities and functions.
- */
-
 #include "Descriptors.h"
 
 /** HID class report descriptor. This is a special descriptor constructed with values from the
@@ -23,7 +16,7 @@ const USB_Descriptor_HIDReport_Datatype_t PROGMEM GenericReport[] = {
     HID_RI_USAGE_PAGE(16, 0xFF60),  // Vendor-defined
     HID_RI_USAGE(8, 0x61),
     HID_RI_COLLECTION(8, 0x01),  // Application
-    HID_RI_USAGE(8, 0x62),          // Data Out
+    HID_RI_USAGE(8, 0x62),       // Data Out
     HID_RI_LOGICAL_MINIMUM(8, 0x00),
     HID_RI_LOGICAL_MAXIMUM(16, 0xFF),
     HID_RI_REPORT_SIZE(8, 0x08),

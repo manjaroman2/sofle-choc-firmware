@@ -13,3 +13,4 @@ hidsend
 *.map
 *.sym
 *.txt
+.vscode/

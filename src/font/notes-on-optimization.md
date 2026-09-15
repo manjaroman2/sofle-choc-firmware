@@ -1,4 +1,12 @@
+## todo
+There is still a lot of possiblity for improvement in decoder.c
 
+
+
+
+
+
+## just notes
 ```
   if(dec.enc_bit_offs + n < 8)
   {

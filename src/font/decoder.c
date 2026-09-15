@@ -5,6 +5,8 @@
 #include "chars.h"
 #include "error.h"
 
+#include <stdint.h>
+
 #ifndef __AVR__
 #include <stddef.h>
 #include <stdio.h>

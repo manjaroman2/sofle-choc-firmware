@@ -14,7 +14,7 @@ LD_FLAGS     = -flto -Wl,--gc-sections -Wl,--relax
 COMPILER_PATH = ../avr-gcc-16.1.0-x64-linux/bin/
 
 # Default target
-all:
+all: asm $(TARGET).hex
 
 # Include LUFA-specific DMBS extension modules
 DMBS_LUFA_PATH ?= $(LUFA_PATH)/Build/LUFA
@@ -31,7 +31,10 @@ include $(DMBS_PATH)/hid.mk
 include $(DMBS_PATH)/avrdude.mk
 include $(DMBS_PATH)/atprogram.mk
 
-.PHONY: font
+.PHONY: font asm
+
+asm: $(TARGET).elf
+	$(COMPILER_PATH)avr-objdump -dS $< > $(TARGET).asm
 
 font: src/font/make_font.py
 	python -u src/font/make_font.py src/font src/font

@@ -45,3 +45,6 @@ program-eeprom: $(TARGET).hex $(TARGET).eep
 hidsend: hidsend.c
 	gcc -O2 -Wall -Wextra -o $@ $<
 
+test: tests/test.c src/font/decoder.c src/font/chars.c
+	gcc -DFONT_COMPRESSED -Itests/ -Isrc/ -O2 -Wall -Wextra -Wno-unused-function -o $@ $^
+

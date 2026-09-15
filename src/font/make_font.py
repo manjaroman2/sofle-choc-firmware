@@ -86,8 +86,10 @@ def process_drawing_compressed(drawing, char, n_cols=10, n_pages=4, indent=4):
         encodings = encode(bits, verbose=False)
         enc_bits = encodings[0].as_bits()
         original_length = len(bits)
+        print(f"{drawing}")
+        
         print(f"bit shrink {original_length}->{len(enc_bits)}")
-        print(encodings[0].as_bitstring(spacer=""))
+        print(encodings[0].as_bitstring(spacer=" "))
 
         pad_bits = 0
         if len(enc_bits) % 8 != 0:
@@ -183,9 +185,9 @@ def generate(font_dir, chars_out_dir):
 extern const FontChar PROGMEM font[];
 #else
 #ifdef FONT_COMPRESSED
-#define FONT_COMP_BITLEN_ORIGINAL {bitlen_message}
-#define FONT_COMP_BITLEN_PATTERN_LENGTH {bitlen_pattern_length}
-#define FONT_COMP_ENC_MAX_BYTES {bit_aligned8(1 + bitlen_message + len_message)//8}
+#define FONT_COMP_BITLEN_ORIGINAL (uint8_t){bitlen_message}
+#define FONT_COMP_BITLEN_PATTERN_LENGTH (uint8_t){bitlen_pattern_length}
+#define FONT_COMP_ENC_MAX_BYTES (uint8_t){bit_aligned8(1 + bitlen_message + len_message)//8}
 typedef uint{bit_aligned8(bitlen_message)}_t uint_BITLEN_LITERAL_LENGTH_t;
 typedef uint{bit_aligned8(bitlen_pattern_length)}_t uint_BITLEN_PATTERN_LENTGTH_t;
 extern const uint8_t PROGMEM font[];

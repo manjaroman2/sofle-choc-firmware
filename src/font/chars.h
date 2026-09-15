@@ -6,9 +6,9 @@
 extern const FontChar PROGMEM font[];
 #else
 #ifdef FONT_COMPRESSED
-#define FONT_COMP_BITLEN_ORIGINAL 9
-#define FONT_COMP_BITLEN_PATTERN_LENGTH 8
-#define FONT_COMP_ENC_MAX_BYTES 42
+#define FONT_COMP_BITLEN_ORIGINAL (uint8_t)9
+#define FONT_COMP_BITLEN_PATTERN_LENGTH (uint8_t)8
+#define FONT_COMP_ENC_MAX_BYTES (uint8_t)42
 typedef uint16_t uint_BITLEN_LITERAL_LENGTH_t;
 typedef uint8_t uint_BITLEN_PATTERN_LENTGTH_t;
 extern const uint8_t PROGMEM font[];

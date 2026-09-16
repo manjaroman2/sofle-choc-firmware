@@ -1,4 +1,6 @@
 #include "Keyboard.h"
+#include "error.h"
+#include "utils.h"
 
 #define OLED_128x32
 #include "oled.h"
@@ -31,34 +33,52 @@ static uint8_t Layout[ROWS][COLS];
 static uint8_t KeyQueue[6];
 static uint8_t KeyQueueSize;
 
+static uint32_t oled_time        = 0;
+static uint32_t oled_last_update = 0;
 
 int main(void)
 {
   SetupHardware();
 
   LEDs_SetAllLEDs(LEDMASK_USB_NOTREADY);
+  timer0_init();
   GlobalInterruptEnable();
 
+  // turn display on
+  // ERR_HANG(oled_write_cmd(0xAF));
+
   // oled test
+  ERR_HANG(oled_init());
   ERR_HANG(oled_test());
 
   // back to ram display
   ERR_HANG(oled_write_cmd(0xA4));
+  ERR_HANG(oled_flush());
+  
 
   // clear disp
-  ERR_HANG(oled_clear());
-
-  // print text
-  ERR_HANG(print_Text("Hello World!"));
-
-  // turn display on
-  // ERR_HANG(oled_write_cmd(0xAF));
+  // ERR_HANG(oled_clear());
 
   for(;;)
   {
     HID_Device_USBTask(&Keyboard_HID_Interface);
     HID_Device_USBTask(&Generic_HID_Interface);
     USB_USBTask();
+
+    continue;
+    if(UsedKeyCodes == 0)
+    {
+      uint32_t time = micros();
+      if(time - oled_last_update >= 100000)
+      {
+        // ERR_HANG(oled_clear());
+        ERR_HANG(print_Text("Hello World!", oled_time % OLED_COLS));
+        ERR_HANG(oled_flush());
+
+        oled_time += 1;
+        oled_last_update = time;
+      }
+    }
   }
 }
 
@@ -138,7 +158,7 @@ void SetupHardware()
   twi_init();
 }
 
-static void test_row(USB_KeyboardReport_Data_t* KeyboardReport, uint8_t row)
+static uint8_t test_row(USB_KeyboardReport_Data_t* KeyboardReport, uint8_t row)
 {
   // column 1 (index = 5 in layout)
   if(IS_DOWN(F, 6))
@@ -176,6 +196,7 @@ static void test_row(USB_KeyboardReport_Data_t* KeyboardReport, uint8_t row)
     LEDMaskKeyboard &= ~LEDS_LED1;
     KeyboardReport->KeyCode[UsedKeyCodes++] = Layout[row][0];
   }
+  return ERR_NONE;
 }
 
 bool CALLBACK_HID_Device_CreateHIDReport(USB_ClassInfo_HID_Device_t* const HIDInterfaceInfo,
@@ -230,6 +251,12 @@ bool CALLBACK_HID_Device_CreateHIDReport(USB_ClassInfo_HID_Device_t* const HIDIn
   else if(HIDInterfaceInfo == &Generic_HID_Interface)
   {
     *ReportSize = 0;
+  }
+  else
+  {
+    ERR_HANG(oled_clear());
+    ERR_HANG(print_Text("Hello World!", oled_time % OLED_COLS));
+    oled_time += 1;
   }
   return false;
 }

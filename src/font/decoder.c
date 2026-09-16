@@ -7,11 +7,8 @@
 
 #include <stdint.h>
 
-#ifndef __AVR__
-#include <stddef.h>
-#include <stdio.h>
 
-static inline uint8_t insert_bits(uint32_t map, uint8_t bits, uint8_t val)
+static inline uint8_t insert_bits_agnostic(uint32_t map, uint8_t bits, uint8_t val)
 {
   uint8_t result = 0;
   for(int i = 0; i < 8; i++)
@@ -22,10 +19,19 @@ static inline uint8_t insert_bits(uint32_t map, uint8_t bits, uint8_t val)
   }
   return result;
 }
+#ifndef __AVR__
+#include <stddef.h>
+#include <stdio.h>
+
+static inline uint8_t insert_bits(uint32_t map, uint8_t bits, uint8_t val)
+{
+  return insert_bits_agnostic(map, bits, val);
+}
 #else
 static inline uint8_t insert_bits(uint32_t map, uint8_t bits, uint8_t val)
 {
-  return __builtin_avr_insert_bits(map, bits, val);
+  return insert_bits_agnostic(map, bits, val);
+  //return __builtin_avr_insert_bits(map, bits, val);
 }
 #endif
 
@@ -42,16 +48,17 @@ typedef struct
   // buffer to hold encoded bytes from pgm
   uint8_t pgm_buffer[FONT_COMP_ENC_MAX_BYTES];
   uint8_t pat_buffer[FONT_CHAR_DATA_LEN / 2];
+  uint8_t dec_buffer[FONT_CHAR_DATA_LEN];
 } Decoder;
 
 static Decoder dec;
 
 static const uint8_t masksFromRight[] = {
-    0b11111111, 0b01111111, 0b00111111, 0b00011111, 0b00001111, 0b00000111, 0b00000011, 0b00000001,
+    0b11111111, 0b01111111, 0b00111111, 0b00011111, 0b00001111, 0b00000111, 0b00000011, 0b00000001, 0b00000000,
 };
 
 static const uint8_t masksFromLeft[] = {
-    0b00000000, 0b10000000, 0b11000000, 0b11100000, 0b11110000, 0b11111000, 0b11111100, 0b11111110,
+    0b00000000, 0b10000000, 0b11000000, 0b11100000, 0b11110000, 0b11111000, 0b11111100, 0b11111110, 0b11111111,
 };
 
 /*
@@ -304,6 +311,8 @@ uint8_t st_read_bits_u8_msbl(uint8_t** out_ptr, uint8_t* out_offs_ptr, uint8_t n
   else
     printf("st_read_bits_u8_msbl out_offs= null  n= %d\n", n);
 #endif
+  if(n == 0)
+    return ERR_NONE;
 
   uint8_t out_byte = 0;
   ERR_FORW(st_read_bits_u8_msbl_nofs(&out_byte, n));
@@ -313,6 +322,10 @@ uint8_t st_read_bits_u8_msbl(uint8_t** out_ptr, uint8_t* out_offs_ptr, uint8_t n
     **out_ptr = out_byte;
     return ERR_NONE;
   }
+
+#ifdef DEC_DEBUG
+  printf("    out_byte= %08b\n", out_byte);
+#endif
 
   uint8_t* out  = *out_ptr;
   uint8_t  offs = *out_offs_ptr;
@@ -325,7 +338,13 @@ uint8_t st_read_bits_u8_msbl(uint8_t** out_ptr, uint8_t* out_offs_ptr, uint8_t n
   }
   else if(offs + n == 8)
   {
+#ifdef DEC_DEBUG
+    printf("    *out= %08b\n", *out);
+#endif DEC_DEBUG
     *out |= (out_byte >> offs);
+#ifdef DEC_DEBUG
+    printf("    *out= %08b\n", *out);
+#endif DEC_DEBUG
     out++;
 
     *out_offs_ptr = 0;
@@ -449,8 +468,8 @@ uint8_t st_read_bits_u16_lsb(uint16_t* out, uint8_t n)
   {
 #if __BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__
     // atmega32u4 uses little-endian
-    uint8_t* out_lo = out_u8 + 1;
-    uint8_t* out_hi = out_u8 + 0;
+    uint8_t* out_lo = out_u8 + 0;
+    uint8_t* out_hi = out_u8 + 1;
     ERR_FORW(st_read_bits_u8_lsb(out_lo, n - 8));
     ERR_FORW(st_read_bits_u8_lsb(out_hi, 8));
 #elif __BYTE_ORDER__ == __ORDER_BIG_ENDIAN__
@@ -513,7 +532,7 @@ uint8_t st_read_bits_u16_msb(uint16_t* out, uint8_t n)
 uint8_t st_copy_pattern_bits(uint8_t** outbuf_ptr, uint8_t* outbuf_bit_offs_ptr, const uint8_t* pat_buf, uint8_t pat_len, uint8_t pat_nbits, uint8_t reps)
 {
 #ifdef DEC_DEBUG
-  if(outbuf_bit_offs != NULL)
+  if(outbuf_bit_offs_ptr != NULL)
     printf("st_copy_pattern_bits  off= %d  pat_len= %d  pat_nbits= %d  reps= %d\n", *outbuf_bit_offs_ptr, pat_len, pat_nbits, reps);
   else
     printf("st_copy_pattern_bits  off= null  pat_len= %d  pat_nbits= %d  reps= %d\n", pat_len, pat_nbits, reps);
@@ -574,6 +593,61 @@ static unsigned clz16(uint16_t n)
   return __builtin_clz((unsigned)n) - ((sizeof(unsigned) * 8) - 16);
 }
 
+void transpose_10x32(uint8_t* out, const uint8_t* in)
+{
+  /*
+  abcdefgh ij
+  klmnop qrst
+  uvwx yzABCD
+  EF GHIJKLMN
+  OPQRSTUV WX
+  YZ0123 4567
+  89ab cdefgh
+  ij klmnopqr
+  stuvwxyz AB 
+  CDEFGH IJKL 
+  MNOP QRSTUV 
+  ....
+
+  out[ 0] = in[ 8][6]in[ 7][4]in[ 6][2]in[ 5][0] in[ 3][6]in[ 2][4]in[ 1][2]in[ 0][0]
+  out[ 1] = in[18][6]in[17][4]in[16][2]in[15][0] in[13][6]in[12][4]in[11][2]in[10][0]
+  out[ 2] = in[28][6]in[27][4]in[26][2]in[25][0] in[23][6]in[22][4]in[21][2]in[20][0]
+  out[ 3] = in[38][6]in[37][4]in[36][2]in[35][0] in[33][6]in[32][4]in[31][2]in[30][0]
+
+  out[ 4] = in[ 8][7]in[ 7][5]in[ 6][3]in[ 5][1] in[ 3][7]in[ 2][5]in[ 1][3]in[ 0][1]
+  ...
+  out[ 7] = ...
+
+  out[ 8] = in[ 9][0]in[ 7][6]in[ 6][4]in[ 5][2] in[ 4][0]in[ 2][6]in[ 1][4]in[ 0][2]
+  ...
+  out[12]
+
+
+  out[ 8] = in[ 9][0]in[ 7][6]in[ 6][4]in[ 5][2] in[ 4][0]in[ 2][6]in[ 1][4]in[ 0][2]
+  ...
+  out[12]
+
+  out[13] = in[ 9][0]in[ 7][6]in[ 6][4]in[ 5][2] in[ 4][10]in[ 3][0]in[ 1][6]in[ 0][4]
+  ...
+  out[12]
+  ...
+  */
+
+  for(uint8_t i = 0; i < FONT_CHAR_DATA_LEN; i++)
+  {
+    uint8_t j = i % 4;
+    uint8_t m = i / 4;
+    uint8_t r = 0;
+    for(uint8_t k = 0; k < 8; k++)
+    {
+      uint16_t p = ((uint16_t)((j * 8) + k) * 10) + m; /* bit index in the stream */
+      r |= (uint8_t)((in[p >> 3] >> (7 - (p & 7))) & 1) << k;
+    }
+    out[i] = r;
+  }
+}
+
+
 uint8_t dec_init(const uint8_t* byte_ptr, uint8_t n_bytes)
 {
   const uint8_t* ptr = byte_ptr;
@@ -591,8 +665,12 @@ uint8_t dec_init(const uint8_t* byte_ptr, uint8_t n_bytes)
   for(uint8_t i = 0; i < FONT_CHAR_DATA_LEN / 2; i++)
     dec.pat_buffer[i] = 0;
 
+  for(uint8_t i = 0; i < FONT_CHAR_DATA_LEN; i++)
+    dec.dec_buffer[i] = 0;
+
   return ERR_NONE;
 }
+
 
 uint8_t dec_decode_char(FontChar* fontchar, char cc)
 {
@@ -618,7 +696,7 @@ uint8_t dec_decode_char(FontChar* fontchar, char cc)
 
   // init decoder
   ERR_FORW(dec_init(byte_ptr, buffer_len));
-  uint8_t* outbuf          = fontchar->data;
+  uint8_t* outbuf          = dec.dec_buffer;
   uint8_t  outbuf_bit_offs = 0;
 
   // decode
@@ -631,12 +709,13 @@ uint8_t dec_decode_char(FontChar* fontchar, char cc)
     {  // literal
 
       // TODO: better literal length bitlen
-      uint_BITLEN_LITERAL_LENGTH_t lit_len       = 0;
-      uint8_t                      potential_eof = st_read_bits_u16_msb(&lit_len, FONT_COMP_BITLEN_ORIGINAL);
+      uint_BITLEN_LITERAL_LENGTH_t lit_len = 0;
+
+      uint8_t potential_eof = st_read_bits_u16_msb(&lit_len, FONT_COMP_BITLEN_ORIGINAL);
 
       // handle padding
       if(potential_eof == ERR_DEC_EOF)
-        return ERR_NONE;
+        break;
       if(potential_eof != ERR_NONE)
         return potential_eof;
 
@@ -646,10 +725,31 @@ uint8_t dec_decode_char(FontChar* fontchar, char cc)
       uint8_t lit_nbits = lit_len & 7;
       uint8_t lit_bytes = (lit_len >> 3) + 1;
 
+#ifdef DEC_DEBUG
+      printf("lit_bytes= %d  lit_nbits= %d\n", lit_bytes, lit_nbits);
+
+      printf("dec.enc_bit_offs= %d\n", dec.enc_bit_offs);
+      printf("dec.pgm_buffer[%d:%d]:\n", dec.enc_byte_counter, dec.enc_buffer_len);
+      for(uint8_t* tmp = dec.pgm_buffer + dec.enc_byte_counter; tmp < dec.pgm_buffer + dec.enc_buffer_len; tmp++)
+      {
+        printf("%08b ", *tmp);
+      }
+      printf("\n");
+#endif
+
       uint8_t* lit_buf = outbuf;
-      while(lit_buf < (outbuf - 1) + lit_bytes)
+      while(lit_buf < outbuf - 1 + lit_bytes)
         ERR_FORW(st_read_bits_u8_msbl(&lit_buf, &outbuf_bit_offs, 8));
       ERR_FORW(st_read_bits_u8_msbl(&lit_buf, &outbuf_bit_offs, lit_nbits));
+
+#ifdef DEC_DEBUG
+      printf("lit_buf:\n");
+      for(uint8_t* tmp = outbuf; tmp < lit_buf; tmp++)
+      {
+        printf("%08b ", *tmp);
+      }
+      printf("\n");
+#endif
 
       outbuf = lit_buf;
     }
@@ -685,6 +785,10 @@ uint8_t dec_decode_char(FontChar* fontchar, char cc)
       ERR_FORW(st_copy_pattern_bits(&outbuf, &outbuf_bit_offs, dec.pat_buffer, pat_bytes, pat_nbits, reps));
     }
   }
+
+  transpose_10x32(fontchar->data, dec.dec_buffer);
+
+  fontchar->kern = 0;
   return ERR_NONE;
 }
 #endif

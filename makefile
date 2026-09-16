@@ -7,7 +7,7 @@ F_CPU        = 16000000
 F_USB        = $(F_CPU)
 OPTIMIZATION = s
 TARGET       = Keyboard
-SRC          = src/$(TARGET).c src/Descriptors.c src/twi.c src/utils.c src/font/decoder.c src/font/chars.c $(LUFA_SRC_USB) $(LUFA_SRC_USBCLASS)
+SRC          = src/$(TARGET).c src/Descriptors.c src/twi.c src/oled.c src/utils.c src/font/decoder.c src/font/chars.c $(LUFA_SRC_USB) $(LUFA_SRC_USBCLASS)
 LUFA_PATH    = lufa/LUFA
 CC_FLAGS     = -DUSE_LUFA_CONFIG_HEADER -IConfig/ -Isrc/ -flto -ffunction-sections -fdata-sections -DFONT_COMPRESSED
 LD_FLAGS     = -flto -Wl,--gc-sections -Wl,--relax
@@ -49,5 +49,5 @@ hidsend: hidsend.c
 	gcc -O2 -Wall -Wextra -o $@ $<
 
 test: tests/test.c src/font/decoder.c src/font/chars.c
-	gcc -DFONT_COMPRESSED -Itests/ -Isrc/ -O2 -Wall -Wextra -Wno-unused-function -o $@ $^
+	gcc -DFONT_COMPRESSED -DDEC_DEBUG -Itests/ -Isrc/ -O2 -fsanitize=address -Wall -Wextra -Wno-unused-function -o $@ $^
 

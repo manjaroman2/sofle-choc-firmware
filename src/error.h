@@ -9,6 +9,9 @@
 #define ERR_DEC_MISSING_CHAR 0x13
 #define ERR_DEC_ARG 0x14
 
+// twi 
+#define ERR_TWI_UNK 0x21
+
 #define ERR_FORW(x)                                                                                                    \
   do                                                                                                                   \
   {                                                                                                                    \

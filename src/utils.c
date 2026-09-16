@@ -7,6 +7,21 @@ static volatile unsigned long timer0_overflow_count = 0;
 
 #define clockCyclesPerMicrosecond() (F_CPU / 1000000L)
 
+void timer0_init(void)
+{
+    TCCR0A = 0;
+    TCCR0B = _BV(CS01) | _BV(CS00); // /64
+
+    TCNT0 = 0;
+
+    TIMSK0 = _BV(TOIE0); // enable overflow interrupt
+}
+
+ISR(TIMER0_OVF_vect)
+{
+    timer0_overflow_count++;
+}
+
 uint32_t micros(void)
 {
   uint32_t m       = 0;

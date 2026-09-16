@@ -14,21 +14,29 @@
 #include "font/chars.h"
 #endif
 
-static uint8_t print_FontChar(const FontChar* font_char, uint8_t* writer_col)
+static uint8_t print_FontChar(const FontChar* font_char, uint8_t* writer_col_ptr)
 {
-  ERR_FORW(oled_set_vertical_addressing());
-  ERR_FORW(oled_select_range(*writer_col, *writer_col + FONT_CHAR_WIDTH - 1, 0, OLED_PAGES - 1));
+  uint8_t writer_col = *writer_col_ptr;
+  uint8_t width = FONT_CHAR_WIDTH - font_char->kern;
 
-  for(uint16_t i = 0; i < OLED_PAGES * FONT_CHAR_WIDTH; i++)
+  if(width == 0 || writer_col > OLED_COLS - width)
+  {
+    return ERR_NONE;
+  }
+
+  ERR_FORW(oled_set_vertical_addressing());
+  ERR_FORW(oled_select_range(writer_col, writer_col + width - 1, 0, OLED_PAGES - 1));
+
+  for(uint16_t i = 0; i < OLED_PAGES * width; i++)
     ERR_FORW(oled_write_data(font_char->data[i]));
 
-  *writer_col = *writer_col + FONT_CHAR_WIDTH - font_char->kern;
-  return 0;
+  *writer_col_ptr = writer_col + width;
+  return ERR_NONE;
 }
 
-uint8_t print_Text(const char* string)
+uint8_t print_Text(const char* string, uint8_t col_offset)
 {
-  uint8_t writer_col = 0;
+  uint8_t writer_col = col_offset;
   for(size_t i = 0; i < SIZE_MAX; i++)
   {
     char c = string[i];

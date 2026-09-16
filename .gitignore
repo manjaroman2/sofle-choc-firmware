@@ -5,6 +5,7 @@ obj/
 .cache/
 compile_commands.json
 hidsend
+*.asm
 *.bin
 *.eep
 *.elf

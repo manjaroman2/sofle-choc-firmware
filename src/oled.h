@@ -34,8 +34,9 @@
 extern uint8_t oled_fb[OLED_FB_SIZE];
 
 uint8_t oled_init(void);
+void    oled_begin_draw(void);
+void    oled_end_draw(void);
 void    oled_task(void);
 uint8_t oled_write_cmd(uint8_t cmd);
 uint8_t oled_select_range(uint8_t col_start, uint8_t col_end, uint8_t page_start, uint8_t page_end);
-uint8_t oled_clear(void);
 uint8_t oled_test(void);

@@ -1,0 +1,18 @@
+{
+  "permissions": {
+    "allow": [
+      "Shell(make test 2>&1 | grep -E \"error|warning\" | grep -vE \"Wendif-labels|extra tokens\" | head; ./test > /tmp/cc_test.log 2>&1; echo \"host test exit=$?\"; grep -E \"passed|FAILED\" /tmp/cc_test.log)",
+      "Shell(make:*)",
+      "Shell(grep:*)",
+      "Shell(make test >/dev/null 2>&1; ./test > /tmp/cc_test.log 2>&1; echo \"host test exit=$?\"; grep -E \"passed|FAILED\" /tmp/cc_test.log; make >/dev/null 2>&1; echo \"build exit=$?\")",
+      "Shell(make test >/dev/null 2>&1; ./test > /tmp/cc_test.log 2>&1; echo \"host test exit=$?\"; grep -E \"passed|FAILED\" /tmp/cc_test.log; echo \"=== firmware ===\"; make 2>&1 | grep -iE \"^src.*(warning|error)\" ; make 2>&1 | tail -4)",
+      "Shell(make test 2>&1 | grep -E \"error|warning\" | grep -vE \"Wendif-labels|extra tokens\" | head; ./test > /tmp/cc_test.log 2>&1; echo \"host test exit=$?\"; grep -E \"passed|FAILED|mismatch\" /tmp/cc_test.log)",
+      "Shell(make test 2>&1 | grep -E \"error|warning\" | grep -vE \"Wendif-labels|extra tokens\" | head; ./test > /tmp/cc_test.log 2>&1; echo \"host test exit=$?\"; grep -E \"passed|FAILED|mismatch\" /tmp/cc_test.log; make >/dev/null 2>&1 && echo \"firmware build ok\" || echo \"FIRMWARE BUILD FAILED\")",
+      "Shell(make test >/dev/null 2>&1; ./test > /tmp/cc_test.log 2>&1; echo \"host exit=$?\"; grep -cE \"passed\" /tmp/cc_test.log; make >/dev/null 2>&1 && echo \"build ok\"; grep -nE \"swap|lsr\" Keyboard.asm | wc -l; ../avr-gcc-16.1.0-x64-linux/bin/avr-size Keyboard.elf | tail -2)",
+      "Shell(make test 2>&1 | grep -E \"error|warning\" | grep -vE \"Wendif-labels|extra tokens\"; ./test > /tmp/cc_test.log 2>&1; echo \"host exit=$?\"; grep -E \"passed|FAILED\" /tmp/cc_test.log; echo \"=== firmware ===\"; make 2>&1 | grep -E \"warning\" | grep -vE \"Wendif-labels|extra tokens|clz8\" ; ../avr-gcc-16.1.0-x64-linux/bin/avr-size Keyboard.elf | tail -2; echo \"=== diff ===\"; git --no-pager diff --stat)",
+      "Shell(make test >/dev/null 2>&1; ./test > /tmp/cc_test.log 2>&1; echo \"host exit=$?\"; grep -E \"passed|FAILED\" /tmp/cc_test.log; make 2>&1 | grep -cE \"^src.*warning|^src.*error\"; echo \"--- oled.c diff ---\"; git --no-pager diff -- src/oled.c)"
+    ],
+    "deny": [],
+    "defaultMode": "default"
+  }
+}

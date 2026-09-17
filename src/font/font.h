@@ -33,26 +33,71 @@ static uint8_t print_FontChar(const FontChar* font_char, uint8_t* writer_col_ptr
   return ERR_NONE;
 }
 
-uint8_t print_Text(const char* string, uint8_t col_offset)
+typedef struct
 {
-  uint8_t writer_col = col_offset;
-  for(size_t i = 0; i < SIZE_MAX; i++)
+  const char* str;
+  uint8_t     idx;
+  uint8_t     col;
+  uint8_t     err;
+} TextJob;
+
+static TextJob text_job;
+
+static void render_finish(void)
+{
+  text_job.str = NULL;
+  oled_end_draw();
+}
+
+// start (or restart) a render. clears the framebuffer and holds the display pump
+// so the half drawn frame is never shown; render_text_step() does the work.
+static void render_text(const char* string, uint8_t col_offset)
+{
+  oled_begin_draw();
+
+  text_job.str = string;
+  text_job.idx = 0;
+  text_job.col = col_offset;
+  text_job.err = ERR_NONE;
+}
+
+// decode and blit at most one glyph, so a caller in a usb/key loop never stalls
+// for a whole string. returns true while the job still has work to do.
+static bool render_text_step(void)
+{
+  if(text_job.str == NULL)
+    return false;
+
+  char c = text_job.str[text_job.idx];
+  if(c == '\0')
   {
-    char c = string[i];
-    if(c == '\0')
-      break;
-    if(c < 0x20 || c > 0x7E)
-      return ERR_UNK;
-
-    static FontChar fontchar;
-#ifdef FONT_COMPRESSED
-    ERR_FORW(dec_decode_char(&fontchar, c - 0x20));
-#else
-    memcpy_P(&fontchar, &font[c - 0x20], sizeof(FontChar));
-#endif
-    ERR_FORW(print_FontChar(&fontchar, &writer_col));
-
-    writer_col += 2;
+    render_finish();
+    return false;
   }
-  return ERR_NONE;
+  if(c < 0x20 || c > 0x7E)
+  {
+    text_job.err = ERR_UNK;
+    render_finish();
+    return false;
+  }
+
+  static FontChar fontchar;
+#ifdef FONT_COMPRESSED
+  uint8_t err = dec_decode_char(&fontchar, c - 0x20);
+#else
+  memcpy_P(&fontchar, &font[c - 0x20], sizeof(FontChar));
+  uint8_t err = ERR_NONE;
+#endif
+  if(err != ERR_NONE)
+  {
+    text_job.err = err;
+    render_finish();
+    return false;
+  }
+
+  print_FontChar(&fontchar, &text_job.col);
+
+  text_job.col += 2;
+  text_job.idx++;
+  return true;
 }

@@ -9,7 +9,7 @@ OPTIMIZATION = s
 TARGET       = Keyboard
 SRC          = src/$(TARGET).c src/Descriptors.c src/twi.c src/oled.c src/utils.c src/font/decoder.c src/font/chars.c $(LUFA_SRC_USB) $(LUFA_SRC_USBCLASS)
 LUFA_PATH    = lufa/LUFA
-CC_FLAGS     = -DUSE_LUFA_CONFIG_HEADER -IConfig/ -Isrc/ -flto -ffunction-sections -fdata-sections -DFONT_UNCOMPRESSED -DTWI_FREQ=400000UL
+CC_FLAGS     = -DUSE_LUFA_CONFIG_HEADER -IConfig/ -Isrc/ -flto -ffunction-sections -fdata-sections -DFONT_COMPRESSED -DTWI_FREQ=400000UL
 LD_FLAGS     = -flto -Wl,--gc-sections -Wl,--relax
 COMPILER_PATH = ../avr-gcc-16.1.0-x64-linux/bin/
 

@@ -160,6 +160,9 @@ def generate(font_dir, chars_out_dir):
     bitlen_pattern_length = 0
     _out = ""
     enc_font_mem_size = 0
+    n_chars = FONT_RANGE[1] - FONT_RANGE[0]
+    font_index = []
+    offset = 0
     for c in range(*FONT_RANGE):
         s, num_enc_bytes, _bitlen_message, _len_message = process_drawing_compressed(
             char_files_D[c], c
@@ -169,10 +172,19 @@ def generate(font_dir, chars_out_dir):
         bitlen_pattern_length = bitlen_message - 1
         _out += f"{s}\n"
         enc_font_mem_size += num_enc_bytes
+        font_index.append(offset)
+        offset += 1 + num_enc_bytes
 
+    index_rows = "\n".join(
+        "    " + ", ".join(f"0x{v:04X}" for v in font_index[i : i + 12]) + ","
+        for i in range(0, n_chars, 12)
+    )
 
     CHARS_C += "const uint8_t PROGMEM font[] = {\n"
     CHARS_C += _out
+    CHARS_C += "\n};\n"
+    CHARS_C += "\nconst uint16_t PROGMEM font_index[FONT_CHAR_COUNT] = {\n"
+    CHARS_C += index_rows
     CHARS_C += "\n};\n"
     CHARS_C += "#endif\n"
     CHARS_C += "#endif\n"
@@ -191,6 +203,8 @@ extern const FontChar PROGMEM font[];
 typedef uint{bit_aligned8(bitlen_message)}_t uint_BITLEN_LITERAL_LENGTH_t;
 typedef uint{bit_aligned8(bitlen_pattern_length)}_t uint_BITLEN_PATTERN_LENTGTH_t;
 extern const uint8_t PROGMEM font[];
+#define FONT_CHAR_COUNT {n_chars}
+extern const uint16_t PROGMEM font_index[FONT_CHAR_COUNT];
 #endif
 #endif
 """

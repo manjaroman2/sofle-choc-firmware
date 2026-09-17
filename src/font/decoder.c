@@ -30,10 +30,17 @@ static inline uint8_t insert_bits(uint32_t map, uint8_t bits, uint8_t val)
 #else
 static inline uint8_t insert_bits(uint32_t map, uint8_t bits, uint8_t val)
 {
-  return insert_bits_agnostic(map, bits, val);
-  //return __builtin_avr_insert_bits(map, bits, val);
+  //return insert_bits_agnostic(map, bits, val);
+  return __builtin_avr_insert_bits(map, bits, val);
 }
 #endif
+
+// the stream is msb first while the glyph layout is lsb first, so the transposed
+// result has to be flipped before it is stored
+static inline uint8_t reverse_bits(uint8_t b)
+{
+  return insert_bits(0x01234567, b, 0);
+}
 
 #define DEC_RESERVIOR_BITS 16
 #define DEC_RESERVIOR_TYPE uint16_t
@@ -593,6 +600,41 @@ static unsigned clz16(uint16_t n)
   return __builtin_clz((unsigned)n) - ((sizeof(unsigned) * 8) - 16);
 }
 
+// 8x8 bit matrix transpose in place, bit 7 of b[r] is column 0 of row r.
+// each stage exchanges a group of bits between rows that differ in one row bit,
+// so 8 bits move per mask/shift instead of the one bit a gather would move.
+static void transpose8(uint8_t* b)
+{
+  uint8_t t;
+
+  // rows differing in bit 2: exchange 4 bit groups
+  for(uint8_t r = 0; r < 4; r++)
+  {
+    t = (uint8_t)((b[r] ^ (b[r + 4] >> 4)) & 0x0F);
+    b[r]     ^= t;
+    b[r + 4] ^= (uint8_t)(t << 4);
+  }
+
+  // rows differing in bit 1: exchange 2 bit groups
+  for(uint8_t blk = 0; blk < 8; blk += 4)
+  {
+    for(uint8_t r = blk; r < blk + 2; r++)
+    {
+      t = (uint8_t)((b[r] ^ (b[r + 2] >> 2)) & 0x33);
+      b[r]     ^= t;
+      b[r + 2] ^= (uint8_t)(t << 2);
+    }
+  }
+
+  // rows differing in bit 0: exchange single bits
+  for(uint8_t r = 0; r < 8; r += 2)
+  {
+    t = (uint8_t)((b[r] ^ (b[r + 1] >> 1)) & 0x55);
+    b[r]     ^= t;
+    b[r + 1] ^= (uint8_t)(t << 1);
+  }
+}
+
 void transpose_10x32(uint8_t* out, const uint8_t* in)
 {
   /*
@@ -633,17 +675,47 @@ void transpose_10x32(uint8_t* out, const uint8_t* in)
   ...
   */
 
-  for(uint8_t i = 0; i < FONT_CHAR_DATA_LEN; i++)
+  // per page: out[m*4 + j] gathers column m from the 8 rows j*8 .. j*8+7, which
+  // is exactly what an 8x8 bit transpose produces
+  for(uint8_t j = 0; j < OLED_PAGES; j++)
   {
-    uint8_t j = i % 4;
-    uint8_t m = i / 4;
-    uint8_t r = 0;
-    for(uint8_t k = 0; k < 8; k++)
+    uint8_t col[8];  // columns 0..7
+    uint8_t c8 = 0;  // column 8, gathered directly: only two columns are left
+    uint8_t c9 = 0;  // column 9
+    uint8_t bit = 1;
+
+    // unrolled so the bit alignment below stays a constant per row
+#pragma GCC unroll 8
+    for(uint8_t r = 0; r < 8; r++)
     {
-      uint16_t p = ((uint16_t)((j * 8) + k) * 10) + m; /* bit index in the stream */
-      r |= (uint8_t)((in[p >> 3] >> (7 - (p & 7))) & 1) << k;
+      // row g = j*8 + r starts at stream bit g*10, grab it as a left aligned
+      // 16 bit window so that column m sits at bit (15 - m)
+      uint8_t  b = (uint8_t)(j * 10 + r + (r >> 2));  // (g*10) >> 3
+      uint16_t w = ((uint16_t)in[b] << 8) | in[b + 1];
+      // (g*10) % 8 == (r & 3) * 2, kept as constant shifts on purpose
+      switch(r & 3)
+      {
+        case 1: w <<= 2; break;
+        case 2: w <<= 4; break;
+        case 3: w <<= 6; break;
+        default: break;
+      }
+
+      col[r] = (uint8_t)(w >> 8);
+      if(w & 0x0080)
+        c8 |= bit;
+      if(w & 0x0040)
+        c9 |= bit;
+      bit += bit;
     }
-    out[i] = r;
+
+    transpose8(col);
+
+    // transpose8 keeps the stream's msb first bit order, the glyph layout is lsb first
+    for(uint8_t m = 0; m < 8; m++)
+      out[m * OLED_PAGES + j] = reverse_bits(col[m]);
+    out[8 * OLED_PAGES + j] = c8;
+    out[9 * OLED_PAGES + j] = c9;
   }
 }
 
@@ -674,23 +746,14 @@ uint8_t dec_init(const uint8_t* byte_ptr, uint8_t n_bytes)
 
 uint8_t dec_decode_char(FontChar* fontchar, char cc)
 {
-  // find char cc
-  const uint8_t* byte_ptr   = font;
-  uint8_t        buffer_len = 0;
-  for(;;)
-  {
-    buffer_len = pgm_read_byte(byte_ptr++);
-    if(buffer_len > FONT_COMP_ENC_MAX_BYTES)
-      return ERR_UNK;
+  // glyph offsets are precomputed in flash, no walking the table
+  if((uint8_t)cc >= FONT_CHAR_COUNT)
+    return ERR_UNK;
 
-    if(cc > 0)
-    {
-      byte_ptr += buffer_len;
-      cc--;
-      continue;
-    }
-    break;
-  }
+  const uint8_t* byte_ptr   = font + pgm_read_word(&font_index[(uint8_t)cc]);
+  uint8_t        buffer_len = pgm_read_byte(byte_ptr++);
+  if(buffer_len > FONT_COMP_ENC_MAX_BYTES)
+    return ERR_UNK;
   if(buffer_len == 0)
     return ERR_DEC_MISSING_CHAR;
 

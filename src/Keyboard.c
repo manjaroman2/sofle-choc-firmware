@@ -55,7 +55,7 @@ int main(void)
   ERR_HANG(oled_write_cmd(0xA4));
   ERR_HANG(oled_select_range(0, OLED_COLS - 1, 0, OLED_PAGES - 1));
 
-  ERR_HANG(print_Text("Hello World!", 0));
+  render_text("Hello World!", 0);
 
   for(;;)
   {
@@ -65,11 +65,13 @@ int main(void)
 
     // never blocks: hands one 32 byte chunk to the twi isr when the bus is free
     oled_task();
+    // at most one glyph per pass, so a whole string never stalls the loop
+    render_text_step();
 
     if(micros() - oled_last_update >= 100000)
     {
-      ERR_HANG(oled_clear());
-      ERR_HANG(print_Text("Hello World!", oled_time % OLED_COLS));
+      // render_text clears the framebuffer and releases the display pump when done
+      render_text("Hello World!", oled_time % OLED_COLS);
 
       oled_time += 1;
       oled_last_update = micros();

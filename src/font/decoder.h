@@ -25,4 +25,5 @@ uint8_t st_copy_pattern_bits(uint8_t** outbuf_ptr, uint8_t* outbuf_bit_offs_ptr,
 
 uint8_t dec_init(const uint8_t* byte_ptr, uint8_t n_bytes);
 uint8_t dec_decode_char(FontChar* fontchar, char cc);
+void    transpose_10x32(uint8_t* out, const uint8_t* in);
 #endif

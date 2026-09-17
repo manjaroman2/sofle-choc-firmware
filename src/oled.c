@@ -10,11 +10,32 @@ uint8_t oled_fb[OLED_FB_SIZE];
 // next framebuffer byte the background pump will send
 static uint16_t oled_tx_pos = 0;
 
+// while the framebuffer is being redrawn the pump must stay off the bus,
+// otherwise every half drawn (or blanked) frame is streamed to the panel
+static bool oled_held = false;
+
 uint8_t oled_init(void)
 {
   memset(oled_fb, 0, sizeof(oled_fb));
   oled_tx_pos = 0;
   return ERR_NONE;
+}
+
+// clear the framebuffer and stop streaming; the panel keeps showing the last
+// complete frame until oled_end_draw()
+void oled_begin_draw(void)
+{
+  oled_held = true;
+  memset(oled_fb, 0, sizeof(oled_fb));
+}
+
+// resume streaming. oled_tx_pos must NOT be reset here: the ssd1306 gddram pointer
+// is only initialised once, by oled_select_range() at boot, and from then on advances
+// in lockstep with oled_tx_pos. Resetting one without the other makes every following
+// frame land at the wrong screen offset.
+void oled_end_draw(void)
+{
+  oled_held = false;
 }
 
 /*
@@ -27,7 +48,7 @@ uint8_t oled_init(void)
 */
 void oled_task(void)
 {
-  if(twi_is_busy())
+  if(oled_held || twi_is_busy())
     return;
 
   uint8_t buf[TWI_BUFFER_LENGTH];
@@ -45,6 +66,9 @@ void oled_task(void)
   twi_writeTo(OLED_ADDR, buf, n, 0, 1);
 }
 
+// blocking, boot only. most commands move the ssd1306 gddram pointer, which would
+// desync it from oled_tx_pos, so do not call this once oled_task() is streaming
+// (oled_select_range() is the one that puts the pointer back in sync).
 uint8_t oled_write_cmd(uint8_t cmd)
 {
   uint8_t buf[2] = {0x00, cmd};
@@ -61,12 +85,6 @@ uint8_t oled_select_range(uint8_t col_start, uint8_t col_end, uint8_t page_start
   ERR_FORW(oled_write_cmd(0x22));
   ERR_FORW(oled_write_cmd(page_start));
   ERR_FORW(oled_write_cmd(page_end));  // page range
-  return ERR_NONE;
-}
-
-uint8_t oled_clear(void)
-{
-  memset(oled_fb, 0, sizeof(oled_fb));
   return ERR_NONE;
 }
 

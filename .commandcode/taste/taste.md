@@ -1,0 +1,1 @@
+- When a change causes a regression, prefers a root-cause investigation (diagnose the exact offending line and explain why) over reverting or patching the symptom. Confidence: 0.55

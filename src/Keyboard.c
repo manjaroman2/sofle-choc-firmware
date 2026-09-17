@@ -40,7 +40,7 @@ static uint8_t KeyQueueSize;
 #define OLED_SCROLL_US   100UL
 #define OLED_SCROLL_STEP 2
 
-static const char banner[]         = "- Hello World! The quick brown fox jumps over the lazy dog -";
+static const char banner[]         = "- abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ!@#$%^&*()[],.\\;'-={}<>|:\"_+/0123456789 -";
 static uint16_t   banner_w         = 0;
 static uint32_t   oled_time        = 0;
 static uint32_t   oled_last_update = 0;

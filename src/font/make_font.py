@@ -1,4 +1,8 @@
+import hashlib
+import json
+import os
 import sys
+from concurrent.futures import ProcessPoolExecutor
 from pathlib import Path
 
 FONT_CHAR_BYTE_SIZE = 1 + 4 * 10
@@ -84,47 +88,73 @@ def process_drawing_uncompressed(drawing, char, n_cols=10, n_pages=4, indent=4):
 
 
 
-def process_drawing_compressed(drawing, char, n_cols=10, n_pages=4, indent=4):
-    from encoder import encode, to_bitstring
+def drawing_bits(drawing):
+    if drawing is None:
+        return None
+    return [
+        int(x)
+        for x in list(
+            "".join([x.strip() for x in drawing.read_text().splitlines() if x.strip()])
+        )
+    ]
 
-    if drawing is not None:
-        out = ""
-        bits = [
-            int(x)
-            for x in list(
-                "".join(
-                    [x.strip() for x in drawing.read_text().splitlines() if x.strip()]
-                )
-            )
-        ]
 
-        encodings = encode(bits, verbose=False)
-        enc_bits = encodings[0].as_bits()
-        original_length = len(bits)
-        print(f"{drawing}")
-        
-        print(f"bit shrink {original_length}->{len(enc_bits)}")
-        print(encodings[0].as_bitstring(spacer=" "))
+def encode_bits(bits):
+    # top-level so it can be pickled to ProcessPoolExecutor workers; the import
+    # lives inside the worker on purpose (see encoder.py's own workers)
+    from encoder import encode
 
-        # always pad at least one bit: the decoder finds the end of the stream by
-        # reading a padding bit and then running out of bits on the length field
-        pad_bits = 8 - (len(enc_bits) % 8)
-        enc_bits.append(1)
-        enc_bits += [0] * (pad_bits - 1)
-        print(f"padding last byte with {pad_bits} bits: {to_bitstring(enc_bits[-pad_bits:])}")
+    return encode(bits, verbose=False)[0].as_bits()
 
-        enc_bytes = []
-        for j in range(len(enc_bits) // 8):
-            byte = 0
-            for i in range(8):
-                byte |= enc_bits[j * 8 + i] << (7 - i)
-            print(f"{byte:08b}")
-            enc_bytes.append(byte)
-        out += f"0x{len(enc_bytes):02X}, "
-        for byte in enc_bytes:
-            out += f"0x{byte:02X}, "
-        return out, len(enc_bytes), original_length.bit_length(), original_length
-    return "0x00, ", 1, 0, 0
+
+def _encoder_hash():
+    return hashlib.sha1((Path(__file__).parent / "encoder.py").read_bytes()).hexdigest()
+
+
+def load_cache(cache_path, encoder_hash):
+    try:
+        data = json.loads(cache_path.read_text())
+    except (OSError, ValueError):
+        return {}
+    if data.get("encoder_hash") != encoder_hash:
+        print("encoder.py changed -> invalidating encoding cache")
+        return {}
+    return data.get("entries", {})
+
+
+def save_cache(cache_path, encoder_hash, entries):
+    cache_path.parent.mkdir(parents=True, exist_ok=True)
+    cache_path.write_text(json.dumps({"encoder_hash": encoder_hash, "entries": entries}))
+
+
+def format_compressed(drawing, bits, enc_bits, n_cols=10, n_pages=4, indent=4):
+    from encoder import to_bitstring
+
+    original_length = len(bits)
+    enc_bits = list(enc_bits)
+
+    print(f"{drawing}")
+    print(f"bit shrink {original_length}->{len(enc_bits)}")
+    print(to_bitstring(enc_bits))
+
+    # always pad at least one bit: the decoder finds the end of the stream by
+    # reading a padding bit and then running out of bits on the length field
+    pad_bits = 8 - (len(enc_bits) % 8)
+    enc_bits.append(1)
+    enc_bits += [0] * (pad_bits - 1)
+    print(f"padding last byte with {pad_bits} bits: {to_bitstring(enc_bits[-pad_bits:])}")
+
+    enc_bytes = []
+    for j in range(len(enc_bits) // 8):
+        byte = 0
+        for i in range(8):
+            byte |= enc_bits[j * 8 + i] << (7 - i)
+        print(f"{byte:08b}")
+        enc_bytes.append(byte)
+    out = f"0x{len(enc_bytes):02X}, "
+    for byte in enc_bytes:
+        out += f"0x{byte:02X}, "
+    return out, len(enc_bytes), original_length.bit_length(), original_length
 
 
 def collect_char_files(style_dir):
@@ -204,14 +234,54 @@ def generate(styles_dir, chars_out_dir):
     bitlen_message = 0
     enc_font_mem_size = 0
     style_symbols = []
+
+    cache_path = chars_out_dir / ".cache" / "font_encodings.json"
+    encoder_hash = _encoder_hash()
+    cache = load_cache(cache_path, encoder_hash)
+
+    # phase 1: hash every drawing, split into cache hits and misses
+    plans = []
+    pending = {}
     for style_name, char_files_D in styles:
+        per_char = []
+        for c in range(*FONT_RANGE):
+            bits = drawing_bits(char_files_D[c])
+            if bits is None:
+                per_char.append((None, None))
+                continue
+            key = hashlib.sha1(bytes(bits)).hexdigest()
+            per_char.append((bits, key))
+            if key not in cache:
+                pending[key] = bits
+                print(f"char {c:#04x} ({style_name}): changed -> encoding")
+        plans.append((style_name, char_files_D, per_char))
+
+    # phase 2: encode only the changed glyphs, on every core
+    if pending:
+        workers = os.cpu_count() or 1
+        print(f"encoding {len(pending)} changed glyph(s) on {workers} cores")
+        keys = list(pending)
+        with ProcessPoolExecutor(max_workers=workers) as executor:
+            for key, enc_bits in zip(
+                keys, executor.map(encode_bits, (pending[k] for k in keys))
+            ):
+                cache[key] = enc_bits
+        save_cache(cache_path, encoder_hash, cache)
+    else:
+        print("no changed glyphs -> reusing cached encodings")
+
+    # phase 3: format (cheap) and assemble
+    for style_name, char_files_D, per_char in plans:
         _out = ""
         font_index = []
         offset = 0
-        for c in range(*FONT_RANGE):
-            s, num_enc_bytes, _bitlen_message, _len_message = process_drawing_compressed(
-                char_files_D[c], c
-            )
+        for c, (bits, key) in zip(range(*FONT_RANGE), per_char):
+            if bits is None:
+                s, num_enc_bytes, _bitlen_message, _len_message = "0x00, ", 1, 0, 0
+            else:
+                s, num_enc_bytes, _bitlen_message, _len_message = format_compressed(
+                    char_files_D[c], bits, cache[key]
+                )
             bitlen_message = max(_bitlen_message, bitlen_message)
             len_message = max(_len_message, len_message)
             _out += f"{s}\n"

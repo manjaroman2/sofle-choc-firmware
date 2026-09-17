@@ -3,6 +3,7 @@
 #include "decoder.h"
 
 #include "chars.h"
+#include "style.h"
 #include "error.h"
 
 #include <stdint.h>
@@ -67,41 +68,6 @@ static const uint8_t masksFromRight[] = {
 static const uint8_t masksFromLeft[] = {
     0b00000000, 0b10000000, 0b11000000, 0b11100000, 0b11110000, 0b11111000, 0b11111100, 0b11111110, 0b11111111,
 };
-
-/*
- *
- * concat 'off' bits from 'lo' with remaining bits from 'hi'
- * example:
- *   off= 3
- *   lo=  abcdefgh
- *   hi=  ijklmnop
- *   => abcijklmn
- *
- */
-static uint8_t twiddle(uint8_t off, uint8_t lo, uint8_t hi)
-{
-  switch(off)
-  {
-    case 0:
-      return insert_bits(0x76543210, hi, lo);
-    case 1:
-      return insert_bits(0xF7654321, hi, lo);
-    case 2:
-      return insert_bits(0xFF765432, hi, lo);
-    case 3:
-      return insert_bits(0xFFF76543, hi, lo);
-    case 4:
-      return insert_bits(0xFFFF7654, hi, lo);
-    case 5:
-      return insert_bits(0xFFFFF765, hi, lo);
-    case 6:
-      return insert_bits(0xFFFFFF76, hi, lo);
-    case 7:
-      return insert_bits(0xFFFFFFF7, hi, lo);
-    default:
-      __builtin_unreachable();
-  }
-}
 
 /*
  *
@@ -531,58 +497,65 @@ uint8_t st_read_bits_u16_msb(uint16_t* out, uint8_t n)
 }
 
 
+// append the top (left aligned) n bits of val to the bitstream at (*out_ptr, *offs_ptr)
+static void append_bits(uint8_t** out_ptr, uint8_t* offs_ptr, uint8_t val, uint8_t n)
+{
+  uint8_t  offs = *offs_ptr;
+  uint8_t* out  = *out_ptr;
+
+  val &= (uint8_t)(0xFF << (8 - n));  // keep only the n valid bits
+
+  *out |= (uint8_t)(val >> offs);
+
+  if(offs + n < 8)
+  {
+    *offs_ptr = offs + n;
+  }
+  else if(offs + n == 8)
+  {
+    *out_ptr  = out + 1;
+    *offs_ptr = 0;
+  }
+  else  // offs + n > 8
+  {
+    out++;
+    *out      = (uint8_t)(val << (8 - offs));
+    *out_ptr  = out;
+    *offs_ptr = offs + n - 8;
+  }
+}
+
 /*
- * 
- * copy pattern n times into output buffer. pat_len is the length of the pattern array, pat_nbits is the number of bits in the last byte. 
- * 
+ * copy a pattern reps times into the output buffer.
+ * pat_buf holds pat_bytes bytes; the last byte carries only pat_nbits bits, so the
+ * pattern is (pat_bytes - 1) * 8 + pat_nbits bits. pat_nbits == 0 means the pattern
+ * is a whole number of bytes and the final byte of pat_buf is scratch.
  */
-uint8_t st_copy_pattern_bits(uint8_t** outbuf_ptr, uint8_t* outbuf_bit_offs_ptr, const uint8_t* pat_buf, uint8_t pat_len, uint8_t pat_nbits, uint8_t reps)
+uint8_t st_copy_pattern_bits(uint8_t** outbuf_ptr, uint8_t* outbuf_bit_offs_ptr, const uint8_t* pat_buf, uint8_t pat_bytes, uint8_t pat_nbits, uint16_t reps)
 {
 #ifdef DEC_DEBUG
   if(outbuf_bit_offs_ptr != NULL)
-    printf("st_copy_pattern_bits  off= %d  pat_len= %d  pat_nbits= %d  reps= %d\n", *outbuf_bit_offs_ptr, pat_len, pat_nbits, reps);
+    printf("st_copy_pattern_bits  off= %d  pat_bytes= %d  pat_nbits= %d  reps= %d\n", *outbuf_bit_offs_ptr, pat_bytes, pat_nbits, reps);
   else
-    printf("st_copy_pattern_bits  off= null  pat_len= %d  pat_nbits= %d  reps= %d\n", pat_len, pat_nbits, reps);
+    printf("st_copy_pattern_bits  off= null  pat_bytes= %d  pat_nbits= %d  reps= %d\n", pat_bytes, pat_nbits, reps);
 #endif
 
-  uint8_t off = *outbuf_bit_offs_ptr;
-  if(off >= 8)
+  if(*outbuf_bit_offs_ptr >= 8)
     return ERR_DEC_ARG;
-  if(pat_len == 0 || pat_nbits == 0 || reps == 0)
+  if(pat_bytes == 0 || (pat_bytes == 1 && pat_nbits == 0) || reps == 0)
     return ERR_DEC_ARG;
 
-  uint8_t  i      = 0;
-  uint8_t* outbuf = *outbuf_ptr;
+  uint8_t full = pat_bytes - 1;  // whole pattern bytes
 
   while(reps > 0)
   {
-    *outbuf = twiddle(off, *outbuf, pat_buf[0]);
-    outbuf++;
-    for(i = 1; i < pat_len; i++)
-    {
-      *outbuf = twiddle_rotate_right(off, (pat_buf[i - 1] & masksFromRight[8 - off]) | (pat_buf[i] & masksFromLeft[8 - off]));
-      outbuf++;
-    }
-
-    if(off + pat_nbits < 8)
-    {
-      off = off + pat_nbits;
-      outbuf--;
-    }
-    else if(off + pat_nbits == 8)
-    {
-      off = 0;
-    }
-    else  // if (off + pat_nbits > 8)
-    {
-      off     = off + pat_nbits - 8;
-      *outbuf = twiddle(off, pat_buf[i - 1], 0);
-    }
+    for(uint8_t i = 0; i < full; i++)
+      append_bits(outbuf_ptr, outbuf_bit_offs_ptr, pat_buf[i], 8);
+    if(pat_nbits)
+      append_bits(outbuf_ptr, outbuf_bit_offs_ptr, pat_buf[full], pat_nbits);
     reps--;
   }
 
-  *outbuf_bit_offs_ptr = off;
-  *outbuf_ptr          = outbuf;
   return ERR_NONE;
 }
 
@@ -744,14 +717,30 @@ uint8_t dec_init(const uint8_t* byte_ptr, uint8_t n_bytes)
 }
 
 
+// trailing blank columns, the same rule make_font.py bakes into the raw table:
+// width = FONT_CHAR_WIDTH - kern is the rightmost lit column + 1.
+static uint8_t derive_kern(const uint8_t* data)
+{
+  for(uint8_t col = FONT_CHAR_WIDTH - 1;; col--)
+  {
+    for(uint8_t p = 0; p < OLED_PAGES; p++)
+      if(data[col * OLED_PAGES + p])
+        return (uint8_t)(FONT_CHAR_WIDTH - 1 - col);
+    if(col == 0)
+      return 0;  // fully blank glyph (space) -> kern 0, matching make_font.py
+  }
+}
+
+
 uint8_t dec_decode_char(FontChar* fontchar, char cc)
 {
   // glyph offsets are precomputed in flash, no walking the table
   if((uint8_t)cc >= FONT_CHAR_COUNT)
     return ERR_UNK;
 
-  const uint8_t* byte_ptr   = font + pgm_read_word(&font_index[(uint8_t)cc]);
-  uint8_t        buffer_len = pgm_read_byte(byte_ptr++);
+  const uint16_t* index      = font_get_index();
+  const uint8_t*  byte_ptr   = font_get_base() + pgm_read_word(&index[(uint8_t)cc]);
+  uint8_t         buffer_len = pgm_read_byte(byte_ptr++);
   if(buffer_len > FONT_COMP_ENC_MAX_BYTES)
     return ERR_UNK;
   if(buffer_len == 0)
@@ -851,7 +840,7 @@ uint8_t dec_decode_char(FontChar* fontchar, char cc)
 
   transpose_10x32(fontchar->data, dec.dec_buffer);
 
-  fontchar->kern = 0;
+  fontchar->kern = derive_kern(fontchar->data);
   return ERR_NONE;
 }
 #endif

@@ -12,7 +12,8 @@ extern const FontChar PROGMEM font[];
 typedef uint16_t uint_BITLEN_LITERAL_LENGTH_t;
 typedef uint8_t uint_BITLEN_PATTERN_LENTGTH_t;
 extern const uint8_t PROGMEM font[];
-#define FONT_CHAR_COUNT 94
+#define FONT_CHAR_COUNT 95
 extern const uint16_t PROGMEM font_index[FONT_CHAR_COUNT];
+extern const uint8_t PROGMEM font_kern[FONT_CHAR_COUNT];
 #endif
 #endif

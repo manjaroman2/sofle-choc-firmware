@@ -18,13 +18,24 @@ void oled_end_draw(void)
 }
 
 #ifndef FONT_CHAR_COUNT
-#define FONT_CHAR_COUNT (0x7E - 0x20)
+#define FONT_CHAR_COUNT (0x7F - 0x20)
 #endif
 
-// blocking wrapper around the incremental render job, for test convenience
-static uint8_t print_Text(const char* string, uint8_t col_offset)
+// fetch one glyph either from the compressed decoder or the raw uncompressed table
+static uint8_t get_glyph(FontChar* out, uint8_t idx)
 {
-  render_text(string, col_offset);
+#ifdef FONT_COMPRESSED
+  return dec_decode_char(out, (char)idx);
+#else
+  memcpy_P(out, &font[idx], sizeof(FontChar));
+  return ERR_NONE;
+#endif
+}
+
+// blocking wrapper around the incremental render job, for test convenience
+static uint8_t print_Text(const char* string, uint16_t width, uint16_t scroll)
+{
+  render_text(string, width, scroll);
   while(render_text_step())
   {
   }
@@ -109,7 +120,7 @@ static bool test_string(char* str)
   {
     printf("  char= 0x%02X ('%c')\n", str[i], str[i]);
     FontChar fc = {0};
-    err_code    = dec_decode_char(&fc, str[i] - (char)0x20);
+    err_code    = get_glyph(&fc, (uint8_t)(str[i] - 0x20));
 
     if(err_code != 0)
     {
@@ -118,7 +129,7 @@ static bool test_string(char* str)
       break;
     }
     glob_t g;
-    char   fp[] = "src/font/char_*_XX";
+    char   fp[] = "src/font/styles/default/char_*_XX";
     if(snprintf(fp + strlen(fp) - 2, 3, "%02X", str[i]) < 0)
     {
       // err
@@ -160,7 +171,7 @@ static bool test_string(char* str)
     }
 
 
-    printf("dec_decode_char:\n");
+    printf("glyph:\n");
     printf("%s\n", fcbuf);
 
     printf("fontchar.data:");
@@ -208,25 +219,26 @@ static bool test_fb_blit(void)
 {
   FontChar fc_H = {0};
   FontChar fc_e = {0};
-  if(dec_decode_char(&fc_H, 'H' - 0x20) != 0 || dec_decode_char(&fc_e, 'e' - 0x20) != 0)
+  if(get_glyph(&fc_H, 'H' - 0x20) != 0 || get_glyph(&fc_e, 'e' - 0x20) != 0)
     return false;
   uint8_t w_H = FONT_CHAR_WIDTH - fc_H.kern;
+  uint16_t width = text_width("He");
 
   memset(oled_fb, 0, sizeof(oled_fb));
-  if(print_Text("He", 4) != 0)
+  if(print_Text("He", width, 0) != 0)
     return false;
 
-  if(!expect_glyph(&fc_H, 4))
+  if(!expect_glyph(&fc_H, 0))
     return false;
-  if(!expect_glyph(&fc_e, 4 + w_H + 2))  // second glyph sits past the 2px gap
+  if(!expect_glyph(&fc_e, w_H + FONT_CHAR_GAP))  // second glyph sits past the gap
     return false;
 
   // nothing outside the two glyphs may be touched
   for(uint8_t col = 0; col < OLED_COLS; col++)
   {
-    if(col >= 4 && col < 4 + w_H)
+    if(col < w_H)
       continue;
-    if(col >= 4 + w_H + 2 && col < 4 + w_H + 2 + (FONT_CHAR_WIDTH - fc_e.kern))
+    if(col >= w_H + FONT_CHAR_GAP && col < w_H + FONT_CHAR_GAP + (FONT_CHAR_WIDTH - fc_e.kern))
       continue;
     for(uint8_t p = 0; p < OLED_PAGES; p++)
       if(oled_fb[p * OLED_COLS + col] != 0)
@@ -239,6 +251,59 @@ static bool test_fb_blit(void)
   return true;
 }
 
+// the display is a 128 column window that slides around the banner ring, wrapping
+// at the seam: banner column b shows at screen column (b - scroll) mod width.
+static bool test_wrap(void)
+{
+  const char* str = "Hello World! The quick brown fox jumps over the lazy dog 0123456789";
+  uint16_t    W   = text_width(str);
+  if(W <= OLED_COLS)
+  {
+    printf("banner %u cols, need > %d\n", (unsigned)W, OLED_COLS);
+    return false;
+  }
+
+  // independent model: lay the whole banner out in a flat strip, then window it
+  enum { STRIP_COLS = 2048 };
+  static uint8_t strip[OLED_PAGES][STRIP_COLS];
+  memset(strip, 0, sizeof(strip));
+
+  uint16_t x = 0;
+  for(const char* p = str; *p; p++)
+  {
+    FontChar fc = {0};
+    if(get_glyph(&fc, (uint8_t)(*p - 0x20)) != 0)
+      return false;
+    uint8_t gw = FONT_CHAR_WIDTH - fc.kern;
+    for(uint8_t c = 0; c < gw; c++)
+      for(uint8_t pg = 0; pg < OLED_PAGES; pg++)
+        if(x + c < STRIP_COLS)
+          strip[pg][x + c] = fc.data[c * OLED_PAGES + pg];
+    x += (uint16_t)gw + FONT_CHAR_GAP;
+  }
+
+  // sweep a whole revolution, including the seam
+  for(uint16_t S = 0; S < W; S += 7)
+  {
+    memset(oled_fb, 0, sizeof(oled_fb));
+    if(print_Text(str, W, S) != 0)
+      return false;
+
+    for(uint8_t col = 0; col < OLED_COLS; col++)
+    {
+      uint16_t b = (uint16_t)((S + col) % W);
+      for(uint8_t pg = 0; pg < OLED_PAGES; pg++)
+        if(oled_fb[pg * OLED_COLS + col] != strip[pg][b])
+        {
+          printf("window mismatch S=%u col=%u page=%u\n", (unsigned)S, col, pg);
+          return false;
+        }
+    }
+  }
+  return true;
+}
+
+#ifdef FONT_COMPRESSED
 // straight copy of the original, obviously-correct bit-at-a-time transpose
 static void transpose_ref(uint8_t* out, const uint8_t* in)
 {
@@ -298,7 +363,9 @@ static bool test_transpose(void)
   }
   return true;
 }
+#endif  // FONT_COMPRESSED
 
+#ifdef FONT_COMPRESSED
 // the precomputed offsets must address exactly what the sequential walk would
 static bool test_font_index(void)
 {
@@ -320,13 +387,85 @@ static bool test_font_index(void)
     printf("out of range char index was accepted\n");
     return false;
   }
-  // 'Z' has no glyph file, so it must report a missing char, not garbage
-  if(dec_decode_char(&fc, 'Z' - 0x20) != ERR_DEC_MISSING_CHAR)
+
+  // style machinery: the default must be present and selecting it must keep decoding valid
+  if(font_style_count() < 1)
   {
-    printf("missing glyph was not reported\n");
+    printf("no font styles registered\n");
+    return false;
+  }
+  font_set_style(0);
+  if(font_get_base() != font || font_get_index() != font_index)
+  {
+    printf("style 0 is not the default font\n");
+    return false;
+  }
+  font_set_style(FONT_CHAR_COUNT);  // out of range, must be ignored
+  if(font_get_base() != font)
+  {
+    printf("out of range style selection was not ignored\n");
     return false;
   }
 
+  return true;
+}
+#endif  // FONT_COMPRESSED
+
+// every printable code point must decode back to exactly its drawing file
+static bool test_alphabet(void)
+{
+  for(int c = 0x20; c <= 0x7E; c++)
+  {
+    FontChar fc = {0};
+    if(get_glyph(&fc, (uint8_t)(c - 0x20)) != 0)
+    {
+      printf("0x%02X ('%c') failed to decode\n", c, c);
+      return false;
+    }
+
+    glob_t g = {0};
+    char   fp[] = "src/font/styles/default/char_*_XX";
+    snprintf(fp + strlen(fp) - 2, 3, "%02X", c);
+    if(glob(fp, 0, NULL, &g) != 0 || g.gl_pathc != 1)
+    {
+      printf("0x%02X ('%c') has no unique drawing file\n", c, c);
+      globfree(&g);
+      return false;
+    }
+
+    char* filebuf = read_file(g.gl_pathv[0]);
+    globfree(&g);
+    if(filebuf == NULL)
+    {
+      printf("0x%02X ('%c') drawing could not be read\n", c, c);
+      return false;
+    }
+
+    char fcbuf[1024 * 4];
+    int  fcbuf_len = test_print_FontChar(fc, fcbuf, 0);
+    if((int)strlen(filebuf) != fcbuf_len || memcmp(fcbuf, filebuf, fcbuf_len) != 0)
+    {
+      printf("0x%02X ('%c') does not match its drawing file\n", c, c);
+      free(filebuf);
+      return false;
+    }
+
+    // the drawing is row-major, 10 columns per row: kern = trailing blank columns,
+    // which is 9 - the rightmost lit column (0 for a fully blank glyph)
+    int max_col = -1;
+    for(int i = 0; i < (int)strlen(filebuf); i++)
+      if(filebuf[i] == '1' && (int)(i % FONT_CHAR_WIDTH) > max_col)
+        max_col = (int)(i % FONT_CHAR_WIDTH);
+    uint8_t expected_kern =
+        (max_col < 0) ? 0 : (uint8_t)(FONT_CHAR_WIDTH - 1 - max_col);
+    if(fc.kern != expected_kern)
+    {
+      printf("0x%02X ('%c') kern=%u, drawing implies %u\n", c, c, fc.kern, expected_kern);
+      free(filebuf);
+      return false;
+    }
+    free(filebuf);
+  }
   return true;
 }
 
@@ -354,6 +493,16 @@ int main()
     failed = 1;
   }
 
+  printf("\nwrap test:\n");
+  if(test_wrap())
+    printf("wrap test passed\n");
+  else
+  {
+    printf("wrap test FAILED\n");
+    failed = 1;
+  }
+
+#ifdef FONT_COMPRESSED
   printf("\ntranspose test:\n");
   if(test_transpose())
     printf("transpose test passed\n");
@@ -369,6 +518,16 @@ int main()
   else
   {
     printf("font index test FAILED\n");
+    failed = 1;
+  }
+#endif
+
+  printf("\nfull alphabet test:\n");
+  if(test_alphabet())
+    printf("full alphabet test passed\n");
+  else
+  {
+    printf("full alphabet test FAILED\n");
     failed = 1;
   }
 

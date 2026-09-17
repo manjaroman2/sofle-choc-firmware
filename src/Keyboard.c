@@ -33,8 +33,17 @@ static uint8_t Layout[ROWS][COLS];
 static uint8_t KeyQueue[6];
 static uint8_t KeyQueueSize;
 
-static uint32_t oled_time        = 0;
-static uint32_t oled_last_update = 0;
+// marquee: one window step every OLED_SCROLL_US, moving OLED_SCROLL_STEP columns each
+// time. the panel takes a full 512B frame per update (512*9/400kHz ~= 12ms) and the
+// gate below waits for it, so OLED_SCROLL_US under ~20ms is inert: speed comes from
+// STEP. ponytail: STEP>1 jumps a few px, that is the artifact that buys the speed
+#define OLED_SCROLL_US   100UL
+#define OLED_SCROLL_STEP 2
+
+static const char banner[]         = "- Hello World! The quick brown fox jumps over the lazy dog -";
+static uint16_t   banner_w         = 0;
+static uint32_t   oled_time        = 0;
+static uint32_t   oled_last_update = 0;
 
 int main(void)
 {
@@ -55,7 +64,8 @@ int main(void)
   ERR_HANG(oled_write_cmd(0xA4));
   ERR_HANG(oled_select_range(0, OLED_COLS - 1, 0, OLED_PAGES - 1));
 
-  render_text("Hello World!", 0);
+  banner_w = text_width(banner);
+  render_text(banner, banner_w, 0);
 
   for(;;)
   {
@@ -68,12 +78,16 @@ int main(void)
     // at most one glyph per pass, so a whole string never stalls the loop
     render_text_step();
 
-    if(micros() - oled_last_update >= 100000)
+    // only start the next frame once the previous one finished rendering and is
+    // fully on the panel: render_text() blanks the framebuffer, so restarting it
+    // mid draw would lose the frame and never reach oled_end_draw()
+    if(oled_frame_ready() && micros() - oled_last_update >= OLED_SCROLL_US)
     {
-      // render_text clears the framebuffer and releases the display pump when done
-      render_text("Hello World!", oled_time % OLED_COLS);
+      // slide the window left; the modulo wraps it around the banner seam
+      uint16_t scroll = banner_w ? (uint16_t)(oled_time % banner_w) : 0;
+      render_text(banner, banner_w, scroll);
 
-      oled_time += 1;
+      oled_time += OLED_SCROLL_STEP;
       oled_last_update = micros();
     }
   }

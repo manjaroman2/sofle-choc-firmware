@@ -9,7 +9,13 @@ OPTIMIZATION = s
 TARGET       = Keyboard
 SRC          = src/$(TARGET).c src/Descriptors.c src/twi.c src/oled.c src/utils.c src/font/decoder.c src/font/chars.c $(LUFA_SRC_USB) $(LUFA_SRC_USBCLASS)
 LUFA_PATH    = lufa/LUFA
-CC_FLAGS     = -DUSE_LUFA_CONFIG_HEADER -IConfig/ -Isrc/ -flto -ffunction-sections -fdata-sections -DFONT_COMPRESSED -DTWI_FREQ=400000UL
+# Font storage switch: the ONLY thing to change is this flag.
+#   -DFONT_COMPRESSED   (default) precomputed compression + decoder
+#   -DFONT_UNCOMPRESSED           raw FontChar table, no decoder
+# Optional double buffer: 1 = render into a back buffer while the front streams (one
+# extra 512B framebuffer, see src/oled.c). 0 = single buffer, render then flush.
+DOUBLE_BUFFER ?= 1
+CC_FLAGS     = -DUSE_LUFA_CONFIG_HEADER -IConfig/ -Isrc/ -flto -ffunction-sections -fdata-sections -DFONT_COMPRESSED -DTWI_FREQ=400000UL $(if $(filter 1,$(DOUBLE_BUFFER)),-DOLED_DOUBLE_BUFFER)
 LD_FLAGS     = -flto -Wl,--gc-sections -Wl,--relax
 COMPILER_PATH = ../avr-gcc-16.1.0-x64-linux/bin/
 
@@ -31,13 +37,23 @@ include $(DMBS_PATH)/hid.mk
 include $(DMBS_PATH)/avrdude.mk
 include $(DMBS_PATH)/atprogram.mk
 
-.PHONY: font asm
+# DMBS only rebuilds objects when sources or the makefile change, so toggling the font
+# flag (especially via the command line) would silently reuse stale objects. Stamp the
+# flags and depend on the stamp so any CC_FLAGS change forces a recompile.
+CC_FLAGS_STAMP := $(OBJDIR)/.ccflags
+$(CC_FLAGS_STAMP): FORCE
+	@echo '$(CC_FLAGS)' | cmp -s - $@ 2>/dev/null || echo '$(CC_FLAGS)' > $@
+FORCE:
+
+$(OBJECT_FILES): $(CC_FLAGS_STAMP)
+
+.PHONY: font asm FORCE
 
 asm: $(TARGET).elf
 	$(COMPILER_PATH)avr-objdump -dS $< > $(TARGET).asm
 
 font: src/font/make_font.py
-	python -u src/font/make_font.py src/font src/font
+	python -u src/font/make_font.py src/font/styles src/font
 
 program: $(TARGET).hex
 	avrdude -p $(MCU) -c avr109 -P /dev/ttyACM0 -D -U flash:w:$(TARGET).hex:i
@@ -48,6 +64,6 @@ program-eeprom: $(TARGET).hex $(TARGET).eep
 hidsend: hidsend.c
 	gcc -O2 -Wall -Wextra -o $@ $<
 
-test: tests/test.c src/font/decoder.c src/font/chars.c
-	gcc -DFONT_COMPRESSED -DDEC_DEBUG -Itests/ -Isrc/ -O2 -fsanitize=address -Wall -Wextra -Wno-unused-function -o $@ $^
+test: tests/test.c src/font/decoder.c src/font/chars.c $(CC_FLAGS_STAMP)
+	gcc $(filter -DFONT_%,$(CC_FLAGS)) -DDEC_DEBUG -Itests/ -Isrc/ -O2 -fsanitize=address -Wall -Wextra -Wno-unused-function -o $@ $(filter-out $(CC_FLAGS_STAMP),$^)
 

@@ -3,6 +3,7 @@
 #include "twi.h"
 #include "error.h"
 
+#include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
 
@@ -37,6 +38,9 @@ uint8_t oled_init(void);
 void    oled_begin_draw(void);
 void    oled_end_draw(void);
 void    oled_task(void);
+// true once the frame begun by the last oled_begin_draw() is fully streamed, so it
+// is safe to blank and redraw the framebuffer without losing a frame on the panel
+bool    oled_frame_ready(void);
 uint8_t oled_write_cmd(uint8_t cmd);
 uint8_t oled_select_range(uint8_t col_start, uint8_t col_end, uint8_t page_start, uint8_t page_end);
 uint8_t oled_test(void);

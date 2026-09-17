@@ -14,6 +14,19 @@ static uint16_t oled_tx_pos = 0;
 // otherwise every half drawn (or blanked) frame is streamed to the panel
 static bool oled_held = false;
 
+#ifdef OLED_DOUBLE_BUFFER
+// the pump streams oled_show while oled_fb is redrawn, so the render overlaps the
+// flush instead of serializing with it. a finished frame is copied in only on a
+// tx_pos wrap, where the panel sits at a clean gddram frame boundary
+static uint8_t oled_show[OLED_FB_SIZE];
+static bool    oled_pending = false;  // oled_fb holds a frame not yet published
+#else
+#define oled_show oled_fb
+// data bytes streamed since the current frame was begun, so the caller can tell
+// when the frame it drew is actually on the panel
+static uint16_t oled_streamed = 0;
+#endif
+
 uint8_t oled_init(void)
 {
   memset(oled_fb, 0, sizeof(oled_fb));
@@ -26,6 +39,9 @@ uint8_t oled_init(void)
 void oled_begin_draw(void)
 {
   oled_held = true;
+#ifndef OLED_DOUBLE_BUFFER
+  oled_streamed = 0;
+#endif
   memset(oled_fb, 0, sizeof(oled_fb));
 }
 
@@ -36,6 +52,9 @@ void oled_begin_draw(void)
 void oled_end_draw(void)
 {
   oled_held = false;
+#ifdef OLED_DOUBLE_BUFFER
+  oled_pending = true;
+#endif
 }
 
 /*
@@ -48,22 +67,65 @@ void oled_end_draw(void)
 */
 void oled_task(void)
 {
-  if(oled_held || twi_is_busy())
+  if(twi_is_busy())
     return;
+#ifndef OLED_DOUBLE_BUFFER
+  if(oled_held)
+    return;
+#endif
 
   uint8_t buf[TWI_BUFFER_LENGTH];
   uint8_t n = 0;
+#ifdef OLED_DOUBLE_BUFFER
+  bool wrapped = false;
+#endif
 
   buf[n++] = 0x40;  // data control byte
   while(n < sizeof(buf))
   {
-    buf[n++] = oled_fb[oled_tx_pos++];
+    buf[n++] = oled_show[oled_tx_pos++];
     if(oled_tx_pos == OLED_FB_SIZE)
+    {
       oled_tx_pos = 0;
+#ifdef OLED_DOUBLE_BUFFER
+      wrapped = true;
+#endif
+    }
   }
+
+#ifndef OLED_DOUBLE_BUFFER
+  // count the data bytes (the control byte does not go to gddram) so the caller
+  // can wait for the whole frame: see oled_frame_ready()
+  if(oled_streamed < OLED_FB_SIZE)
+  {
+    uint16_t total = (uint16_t)(oled_streamed + (n - 1));
+    oled_streamed = (total > OLED_FB_SIZE) ? OLED_FB_SIZE : total;
+  }
+#else
+  // publish a finished frame only where tx_pos wrapped: the panel is at a frame
+  // boundary there, so the new frame is never spliced into a half sent one
+  if(oled_pending && wrapped)
+  {
+    memcpy(oled_show, oled_fb, sizeof(oled_fb));
+    oled_pending = false;
+  }
+#endif
 
   // errors are ignored: a dropped frame is a display glitch, never a stalled loop
   twi_writeTo(OLED_ADDR, buf, n, 0, 1);
+}
+
+// true once the frame begun by the last oled_begin_draw() has been fully sent, so
+// blanking it for the next frame can no longer throw away what was drawn
+bool oled_frame_ready(void)
+{
+#ifdef OLED_DOUBLE_BUFFER
+  // the back buffer is free as soon as the last render finished and was published;
+  // the front keeps streaming meanwhile, which is the point of the double buffer
+  return !oled_held && !oled_pending;
+#else
+  return !oled_held && oled_streamed >= OLED_FB_SIZE;
+#endif
 }
 
 // blocking, boot only. most commands move the ssd1306 gddram pointer, which would

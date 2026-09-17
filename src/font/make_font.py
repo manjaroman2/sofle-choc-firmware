@@ -18,25 +18,40 @@ def bit_aligned8(n):
     return n+7-(n-1)%8
 
 
+def read_glyph(drawing, n_cols=10, n_pages=4):
+    """Read a glyph PNG into rows of 0/1. Black = 1, everything else = 0."""
+    from PIL import Image
+
+    # flatten onto white first: a transparent background is (0,0,0,0), which
+    # convert("RGB") would report as black and turn the whole glyph on
+    img = Image.open(drawing).convert("RGBA")
+    img = Image.alpha_composite(
+        Image.new("RGBA", img.size, (255, 255, 255, 255)), img
+    ).convert("RGB")
+    w, h = img.size
+    if w != n_cols or h != n_pages * 8:
+        raise DrawException(
+            f"{drawing.name}: expected {n_cols}x{n_pages * 8}, got {w}x{h}"
+        )
+    data = list(img.getdata())
+    return [
+        [1 if data[y * w + x] == (0, 0, 0) else 0 for x in range(w)] for y in range(h)
+    ]
+
+
 def kern_of(drawing, n_cols=10):
     if drawing is None:
         return 0
     max_col = -1
-    for l in drawing.read_text().splitlines():
-        if not l:
-            continue
-        line_split = l.strip().split(" ")
-        if len(line_split) != n_cols:
-            line_split = list(l.strip())
-        for i, x in enumerate(line_split):
-            if x == "1":
+    for line_bits in read_glyph(drawing, n_cols=n_cols):
+        for i, bit in enumerate(line_bits):
+            if bit == 1:
                 max_col = max(max_col, i)
     return 0 if max_col < 0 else n_cols - 1 - max_col
 
 
 def process_drawing_uncompressed(drawing, char, n_cols=10, n_pages=4, indent=4):
     cols = []
-    lc = 0
     kern = 0
 
     indent = " " * 4
@@ -44,27 +59,9 @@ def process_drawing_uncompressed(drawing, char, n_cols=10, n_pages=4, indent=4):
     if drawing is not None:
         print(f"generating from {drawing.name}")
 
-        bits = []
-        for l in drawing.read_text().splitlines():
-            if not l:
-                continue
-            page = (lc - lc % 8) // 8
-            if page >= n_pages:
-                print(f"line #{lc} % 8 >= n_pages {n_pages}")
-                raise DrawException(f"line #{lc} % 8 >= n_pages {n_pages}")
-            line_split = l.strip().split(" ")
-            if len(line_split) != n_cols:
-                line_split = list(l.strip())
-                if len(line_split) != n_cols:
-                    raise DrawException(
-                        f"line #{lc} does not contain {n_cols} columns, it contains {len(line_split)}"
-                    )
-            line_bits = [ord(x) - ord("0") for x in line_split]
-            bits.append(line_bits)
-
-            lc += 1
-
-        for lc, line_bits in enumerate(bits):
+        for lc, line_bits in enumerate(
+            read_glyph(drawing, n_cols=n_cols, n_pages=n_pages)
+        ):
             page = (lc - lc % 8) // 8
             biti = lc % 8
             for i, bit in enumerate(line_bits):
@@ -91,12 +88,7 @@ def process_drawing_uncompressed(drawing, char, n_cols=10, n_pages=4, indent=4):
 def drawing_bits(drawing):
     if drawing is None:
         return None
-    return [
-        int(x)
-        for x in list(
-            "".join([x.strip() for x in drawing.read_text().splitlines() if x.strip()])
-        )
-    ]
+    return [bit for row in read_glyph(drawing) for bit in row]
 
 
 def encode_bits(bits):
@@ -158,7 +150,7 @@ def format_compressed(drawing, bits, enc_bits, n_cols=10, n_pages=4, indent=4):
 
 
 def collect_char_files(style_dir):
-    char_files = list(style_dir.glob("./char_*_*"))
+    char_files = list(style_dir.glob("./char_*_*.png"))
     print(
         f"style '{style_dir.name}': found {len(char_files)} chars. missing "
         f"{max(0, (FONT_RANGE[1] - FONT_RANGE[0]) - len(char_files))} for full range"

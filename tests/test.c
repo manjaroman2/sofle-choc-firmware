@@ -6,6 +6,14 @@
 #include "font/font.h"
 #include "font/chars.h"
 
+// vendored single-header decoder, used to read the .png glyph drawings below.
+// png only - the drawings are the only images this test ever touches.
+#define STBI_ONLY_PNG
+#define STBI_NO_HDR
+#define STBI_NO_LINEAR
+#define STB_IMAGE_IMPLEMENTATION
+#include "stb_image.h"
+
 // font.h only declares it; the device firmware defines it in oled.c
 uint8_t oled_fb[OLED_FB_SIZE];
 
@@ -42,46 +50,49 @@ static uint8_t print_Text(const char* string, uint16_t width, uint16_t scroll)
   return text_job.err;
 }
 
-char* read_file(const char* path)
+// load the drawing for code point `c` as a row-major '0'/'1' string.
+// same rule as make_font.py: flatten transparency onto white, then a pixel is set
+// iff it is fully black - white, grey and colours are all clear.
+static bool load_drawing(uint8_t c, char* out, size_t out_len)
 {
-  FILE* f = fopen(path, "rb");
-  if(!f)
-    return NULL;
-
-  fseek(f, 0, SEEK_END);
-  long size = ftell(f);
-  rewind(f);
-
-  if(size < 0)
+  glob_t g = {0};
+  char   fp[128];
+  snprintf(fp, sizeof(fp), "src/font/styles/default/char_*_%02X.png", c);
+  if(glob(fp, 0, NULL, &g) != 0 || g.gl_pathc != 1)
   {
-    fclose(f);
-    return NULL;
+    printf("0x%02X ('%c') has no unique drawing file\n", c, c);
+    globfree(&g);
+    return false;
   }
 
-  char* buf = malloc((size_t)size + 1);
-  if(!buf)
+  int            dw = 0, dh = 0, dch = 0;
+  unsigned char* pixels = stbi_load(g.gl_pathv[0], &dw, &dh, &dch, 4);
+  globfree(&g);
+  if(pixels == NULL)
   {
-    fclose(f);
-    return NULL;
+    printf("0x%02X ('%c') drawing could not be read\n", c, c);
+    return false;
+  }
+  if(dw != FONT_CHAR_WIDTH || dh != OLED_PAGES * 8 || (size_t)(dw * dh) + 1 > out_len)
+  {
+    printf("0x%02X ('%c') drawing is %dx%d, expected %dx%d\n", c, c, dw, dh,
+           FONT_CHAR_WIDTH, OLED_PAGES * 8);
+    stbi_image_free(pixels);
+    return false;
   }
 
-  char* buf_ptr = buf;
-  for(size_t i = 0; i < (size_t)size; i++)
+  for(int i = 0; i < dw * dh; i++)
   {
-    char   tmp = 0;
-    size_t n   = fread(&tmp, 1, 1, f);
-    if(n != 1)
-    {
-      free(buf);
-      return NULL;
-    }
-    if(tmp == '\n')
-      continue;
-    *buf_ptr++ = tmp;
+    const unsigned char* p  = &pixels[i * 4];
+    unsigned char        a  = p[3];
+    unsigned char        cr = (unsigned char)((p[0] * a + 255 * (255 - a)) / 255);
+    unsigned char        cg = (unsigned char)((p[1] * a + 255 * (255 - a)) / 255);
+    unsigned char        cb = (unsigned char)((p[2] * a + 255 * (255 - a)) / 255);
+    out[i]                  = (cr == 0 && cg == 0 && cb == 0) ? '1' : '0';
   }
-  fclose(f);
-  *buf_ptr = '\0';
-  return buf;
+  out[dw * dh] = '\0';
+  stbi_image_free(pixels);
+  return true;
 }
 
 static int test_print_FontChar(FontChar fc, char* out, const char linesep)
@@ -128,45 +139,20 @@ static bool test_string(char* str)
       passed = false;
       break;
     }
-    glob_t g;
-    char   fp[] = "src/font/styles/default/char_*_XX";
-    if(snprintf(fp + strlen(fp) - 2, 3, "%02X", str[i]) < 0)
+    char drawing[FONT_CHAR_WIDTH * OLED_PAGES * 8 + 1];
+    if(!load_drawing((uint8_t)str[i], drawing, sizeof(drawing)))
     {
-      // err
       passed = false;
       break;
     }
-    if(glob(fp, 0, NULL, &g) != 0)
-    {
-      // err
-      passed = false;
-      break;
-    }
-    if(g.gl_pathc != 1)
-    {
-      // err
-      globfree(&g);
-      passed = false;
-      break;
-    }
-
-    char* filebuf = read_file(g.gl_pathv[0]);
-    if(filebuf == NULL)
-    {
-      passed = false;
-      globfree(&g);
-      break;
-    }
-    int filebuf_len = strlen(filebuf);
 
     char fcbuf[1024 * 4];
-    int  fcbuf_len = test_print_FontChar(fc, fcbuf, 0);
-    if(filebuf_len != fcbuf_len)
+    int  fcbuf_len   = test_print_FontChar(fc, fcbuf, 0);
+    int  drawing_len = strlen(drawing);
+    if(drawing_len != fcbuf_len)
     {
-      printf("fcbuf_len = %d   filebuf_len = %d\n", fcbuf_len, filebuf_len);
+      printf("fcbuf_len = %d   drawing_len = %d\n", fcbuf_len, drawing_len);
       passed = false;
-      globfree(&g);
-      free(filebuf);
       break;
     }
 
@@ -183,20 +169,16 @@ static bool test_string(char* str)
     }
     printf("\n");
 
-    printf("read_file %s:\n", g.gl_pathv[0]);
-    printf("%s\n", filebuf);
+    printf("drawing:\n");
+    printf("%s\n", drawing);
 
     printf("\n");
 
-    if(memcmp(fcbuf, filebuf, filebuf_len) != 0)
+    if(memcmp(fcbuf, drawing, fcbuf_len) != 0)
     {
       passed = false;
-      globfree(&g);
-      free(filebuf);
       break;
     }
-    globfree(&g);
-    free(filebuf);
   }
   return passed;
 }
@@ -423,48 +405,31 @@ static bool test_alphabet(void)
       return false;
     }
 
-    glob_t g = {0};
-    char   fp[] = "src/font/styles/default/char_*_XX";
-    snprintf(fp + strlen(fp) - 2, 3, "%02X", c);
-    if(glob(fp, 0, NULL, &g) != 0 || g.gl_pathc != 1)
-    {
-      printf("0x%02X ('%c') has no unique drawing file\n", c, c);
-      globfree(&g);
+    char drawing[FONT_CHAR_WIDTH * OLED_PAGES * 8 + 1];
+    if(!load_drawing((uint8_t)c, drawing, sizeof(drawing)))
       return false;
-    }
-
-    char* filebuf = read_file(g.gl_pathv[0]);
-    globfree(&g);
-    if(filebuf == NULL)
-    {
-      printf("0x%02X ('%c') drawing could not be read\n", c, c);
-      return false;
-    }
 
     char fcbuf[1024 * 4];
     int  fcbuf_len = test_print_FontChar(fc, fcbuf, 0);
-    if((int)strlen(filebuf) != fcbuf_len || memcmp(fcbuf, filebuf, fcbuf_len) != 0)
+    if((int)strlen(drawing) != fcbuf_len || memcmp(fcbuf, drawing, fcbuf_len) != 0)
     {
       printf("0x%02X ('%c') does not match its drawing file\n", c, c);
-      free(filebuf);
       return false;
     }
 
     // the drawing is row-major, 10 columns per row: kern = trailing blank columns,
     // which is 9 - the rightmost lit column (0 for a fully blank glyph)
     int max_col = -1;
-    for(int i = 0; i < (int)strlen(filebuf); i++)
-      if(filebuf[i] == '1' && (int)(i % FONT_CHAR_WIDTH) > max_col)
+    for(int i = 0; i < (int)strlen(drawing); i++)
+      if(drawing[i] == '1' && (int)(i % FONT_CHAR_WIDTH) > max_col)
         max_col = (int)(i % FONT_CHAR_WIDTH);
     uint8_t expected_kern =
         (max_col < 0) ? 0 : (uint8_t)(FONT_CHAR_WIDTH - 1 - max_col);
     if(fc.kern != expected_kern)
     {
       printf("0x%02X ('%c') kern=%u, drawing implies %u\n", c, c, fc.kern, expected_kern);
-      free(filebuf);
       return false;
     }
-    free(filebuf);
   }
   return true;
 }

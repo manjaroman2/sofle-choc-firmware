@@ -41,6 +41,7 @@ static uint8_t KeyQueueSize;
 #define OLED_SCROLL_STEP 2
 
 static const char banner[]         = "- abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ!@#$%^&*()[],.\\;'-={}<>|:\"_+/0123456789 -";
+//static const char banner[]         = "- hi -";
 static uint16_t   banner_w         = 0;
 static uint32_t   oled_time        = 0;
 static uint32_t   oled_last_update = 0;
@@ -80,8 +81,10 @@ int main(void)
 
     // only start the next frame once the previous one finished rendering and is
     // fully on the panel: render_text() blanks the framebuffer, so restarting it
-    // mid draw would lose the frame and never reach oled_end_draw()
-    if(oled_frame_ready() && micros() - oled_last_update >= OLED_SCROLL_US)
+    // mid draw would lose the frame and never reach oled_end_draw(). only scroll
+    // when the text is wider than the window: a banner that fits is drawn once by
+    // the render_text() above and left static
+    if(banner_w > OLED_COLS && oled_frame_ready() && micros() - oled_last_update >= OLED_SCROLL_US)
     {
       // slide the window left; the modulo wraps it around the banner seam
       uint16_t scroll = banner_w ? (uint16_t)(oled_time % banner_w) : 0;

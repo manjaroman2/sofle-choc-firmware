@@ -18,6 +18,8 @@ DOUBLE_BUFFER ?= 1
 CC_FLAGS     = -DUSE_LUFA_CONFIG_HEADER -IConfig/ -Isrc/ -flto -ffunction-sections -fdata-sections -DFONT_COMPRESSED -DTWI_FREQ=400000UL $(if $(filter 1,$(DOUBLE_BUFFER)),-DOLED_DOUBLE_BUFFER)
 LD_FLAGS     = -flto -Wl,--gc-sections -Wl,--relax
 COMPILER_PATH = ../avr-gcc-16.1.0-x64-linux/bin/
+# font generation reads .png glyphs, so it needs Pillow - see the venv note in README
+FONT_PYTHON  = .venv/bin/python
 
 # Default target
 all: asm $(TARGET).hex
@@ -53,7 +55,7 @@ asm: $(TARGET).elf
 	$(COMPILER_PATH)avr-objdump -dS $< > $(TARGET).asm
 
 font: src/font/make_font.py
-	python -u src/font/make_font.py src/font/styles src/font
+	$(FONT_PYTHON) -u src/font/make_font.py src/font/styles src/font
 
 program: $(TARGET).hex
 	avrdude -p $(MCU) -c avr109 -P /dev/ttyACM0 -D -U flash:w:$(TARGET).hex:i

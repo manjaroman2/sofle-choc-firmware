@@ -16,11 +16,14 @@ it uses lufa for the usb communication and build system
 - avr-gcc 
 - avr-libc
 - lufa
+- python3 + pillow for `make font` (kept out of the system interpreter):
+  `python3 -m venv .venv && .venv/bin/pip install pillow`
 
 ## fonts
 
-glyphs live in `src/font/styles/<style>/char_*_*` (10x32 grid per char) and are
-compiled into `src/font/chars.c` by `make font`.
+glyphs live in `src/font/styles/<style>/char_*_*.png` (one 10x32 png per char:
+a **black** pixel is a set bit, anything else - white, transparent, grey - is a
+clear bit) and are compiled into `src/font/chars.c` by `make font`.
 
 the storage mode is picked by a single flag in `CC_FLAGS` (makefile):
 

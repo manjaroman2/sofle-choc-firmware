@@ -3,7 +3,10 @@
 #include <string.h>
 #include <glob.h>
 
-#include "font/decoder.h"
+#include "font/font.h"
+
+// font.h only declares it; the device firmware defines it in oled.c
+uint8_t oled_fb[OLED_FB_SIZE];
 
 char* read_file(const char* path)
 {
@@ -164,13 +167,78 @@ static bool test_string(char* str)
   return passed;
 }
 
+static bool expect_glyph(const FontChar* fc, uint8_t col)
+{
+  uint8_t width = FONT_CHAR_WIDTH - fc->kern;
+  for(uint8_t c = 0; c < width; c++)
+    for(uint8_t p = 0; p < OLED_PAGES; p++)
+      if(oled_fb[p * OLED_COLS + col + c] != fc->data[c * OLED_PAGES + p])
+      {
+        printf("mismatch at col=%u page=%u\n", c, p);
+        return false;
+      }
+  return true;
+}
+
+// print_Text renders column-major font data into a page-major framebuffer
+static bool test_fb_blit(void)
+{
+  FontChar fc_H = {0};
+  FontChar fc_e = {0};
+  if(dec_decode_char(&fc_H, 'H' - 0x20) != 0 || dec_decode_char(&fc_e, 'e' - 0x20) != 0)
+    return false;
+  uint8_t w_H = FONT_CHAR_WIDTH - fc_H.kern;
+
+  memset(oled_fb, 0, sizeof(oled_fb));
+  if(print_Text("He", 4) != 0)
+    return false;
+
+  if(!expect_glyph(&fc_H, 4))
+    return false;
+  if(!expect_glyph(&fc_e, 4 + w_H + 2))  // second glyph sits past the 2px gap
+    return false;
+
+  // nothing outside the two glyphs may be touched
+  for(uint8_t col = 0; col < OLED_COLS; col++)
+  {
+    if(col >= 4 && col < 4 + w_H)
+      continue;
+    if(col >= 4 + w_H + 2 && col < 4 + w_H + 2 + (FONT_CHAR_WIDTH - fc_e.kern))
+      continue;
+    for(uint8_t p = 0; p < OLED_PAGES; p++)
+      if(oled_fb[p * OLED_COLS + col] != 0)
+      {
+        printf("stray pixel at col=%u page=%u\n", col, p);
+        return false;
+      }
+  }
+
+  return true;
+}
+
 int main()
 {
-  char* s = "Hello World!";
+  int   failed = 0;
+  char* s      = "Hello World!";
   printf("testing: %s\n\n", s);
   if(!test_string(s))
+  {
     printf("test failed\n");
+    failed = 1;
+  }
   else
+  {
     printf("test passed\n");
-  return 0;
+  }
+
+  printf("\nfb blit test:\n");
+  if(test_fb_blit())
+    printf("fb blit test passed\n");
+  else
+  {
+    printf("fb blit test FAILED\n");
+    failed = 1;
+  }
+
+  return failed;
 }

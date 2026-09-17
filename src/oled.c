@@ -3,46 +3,54 @@
 
 #include <stddef.h>
 #include <stdint.h>
+#include <string.h>
 
-#define OLED_TWI_BUFFER_LEN 10
-static uint8_t twi_buffer[OLED_TWI_BUFFER_LEN];
-static uint8_t twi_buffer_idx = 0;
+uint8_t oled_fb[OLED_FB_SIZE];
+
+// next framebuffer byte the background pump will send
+static uint16_t oled_tx_pos = 0;
 
 uint8_t oled_init(void)
 {
-  for(uint8_t i = 0; i < OLED_TWI_BUFFER_LEN; i++)
-    twi_buffer[i] = 0;
+  memset(oled_fb, 0, sizeof(oled_fb));
+  oled_tx_pos = 0;
   return ERR_NONE;
 }
 
-uint8_t oled_flush(void)
+/*
+  Streams the framebuffer to the display without ever blocking the caller.
+
+  The gddram window is set once at boot (full frame, horizontal addressing), so the
+  ssd1306 pointer auto-wraps and each transaction is just [0x40, data...]. Transfers
+  are started with wait=0: the twi isr drains them in the background, so the main loop
+  is never held up and never misses a key scan.
+*/
+void oled_task(void)
 {
-    if(twi_buffer_idx == 0)
-        return ERR_NONE;
+  if(twi_is_busy())
+    return;
 
-    if(twi_writeTo(OLED_ADDR, twi_buffer, twi_buffer_idx, 1, 1) != 0)
-        return ERR_TWI_UNK;
+  uint8_t buf[TWI_BUFFER_LENGTH];
+  uint8_t n = 0;
 
-    twi_buffer_idx = 0;
-    return ERR_NONE;
-}
+  buf[n++] = 0x40;  // data control byte
+  while(n < sizeof(buf))
+  {
+    buf[n++] = oled_fb[oled_tx_pos++];
+    if(oled_tx_pos == OLED_FB_SIZE)
+      oled_tx_pos = 0;
+  }
 
-uint8_t oled_write_buf(uint8_t control, uint8_t payload)
-{
-  twi_buffer[twi_buffer_idx++] = control;
-  twi_buffer[twi_buffer_idx++] = payload;
-  if (twi_buffer_idx == OLED_TWI_BUFFER_LEN)
-    return oled_flush();
-  return ERR_NONE;
+  // errors are ignored: a dropped frame is a display glitch, never a stalled loop
+  twi_writeTo(OLED_ADDR, buf, n, 0, 1);
 }
 
 uint8_t oled_write_cmd(uint8_t cmd)
 {
-  return oled_write_buf(0x00, cmd);
-}
-uint8_t oled_write_data(uint8_t data)
-{
-  return oled_write_buf(0x40, data);
+  uint8_t buf[2] = {0x00, cmd};
+  if(twi_writeTo(OLED_ADDR, buf, sizeof(buf), 1, 1) != 0)
+    return ERR_TWI_UNK;
+  return ERR_NONE;
 }
 
 uint8_t oled_select_range(uint8_t col_start, uint8_t col_end, uint8_t page_start, uint8_t page_end)
@@ -58,26 +66,7 @@ uint8_t oled_select_range(uint8_t col_start, uint8_t col_end, uint8_t page_start
 
 uint8_t oled_clear(void)
 {
-  ERR_FORW(oled_select_range(0, OLED_COLS - 1, 0, OLED_PAGES - 1));
-
-  for(uint16_t i = 0; i < OLED_COLS * OLED_PAGES; i++)
-    ERR_FORW(oled_write_data(0x00));
-
-  ERR_FORW(oled_flush());
-  return ERR_NONE;
-}
-
-uint8_t oled_set_vertical_addressing(void)
-{
-  ERR_FORW(oled_write_cmd(0x20));
-  ERR_FORW(oled_write_cmd(0x01));
-  return ERR_NONE;
-}
-
-uint8_t oled_set_horizontal_addressing(void)
-{
-  ERR_FORW(oled_write_cmd(0x20));
-  ERR_FORW(oled_write_cmd(0x00));
+  memset(oled_fb, 0, sizeof(oled_fb));
   return ERR_NONE;
 }
 
@@ -90,7 +79,7 @@ uint8_t oled_test(void)
       0xD3, 0x00,               // display offset
       0x40,                     // start line 0
       0x8D, 0x14,               // charge pump enable
-      0x20, 0x00,               // addressing mode (0x00 for horizontal addressing mode)
+      0x20, 0x00,               // addressing mode (horizontal, required by oled_task)
       0xA1,                     // segment remap
       0xC8,                     // COM scan direction
       0xDA, OLED_OP_COM,        // COM pins

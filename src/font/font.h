@@ -24,11 +24,10 @@ static uint8_t print_FontChar(const FontChar* font_char, uint8_t* writer_col_ptr
     return ERR_NONE;
   }
 
-  ERR_FORW(oled_set_vertical_addressing());
-  ERR_FORW(oled_select_range(writer_col, writer_col + width - 1, 0, OLED_PAGES - 1));
-
-  for(uint16_t i = 0; i < OLED_PAGES * width; i++)
-    ERR_FORW(oled_write_data(font_char->data[i]));
+  // font data is column-major (data[col * pages + page]), the fb is page-major
+  for(uint8_t c = 0; c < width; c++)
+    for(uint8_t p = 0; p < OLED_PAGES; p++)
+      oled_fb[p * OLED_COLS + writer_col + c] = font_char->data[c * OLED_PAGES + p];
 
   *writer_col_ptr = writer_col + width;
   return ERR_NONE;

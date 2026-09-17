@@ -28,13 +28,14 @@
 #endif
 #endif
 
+#define OLED_FB_SIZE (OLED_COLS * OLED_PAGES)
+
+// page-major gddram shadow: oled_fb[page * OLED_COLS + col]
+extern uint8_t oled_fb[OLED_FB_SIZE];
+
 uint8_t oled_init(void);
-uint8_t oled_flush(void);
-uint8_t oled_write_buf(uint8_t control, uint8_t payload);
+void    oled_task(void);
 uint8_t oled_write_cmd(uint8_t cmd);
-uint8_t oled_write_data(uint8_t data);
 uint8_t oled_select_range(uint8_t col_start, uint8_t col_end, uint8_t page_start, uint8_t page_end);
 uint8_t oled_clear(void);
-uint8_t oled_set_vertical_addressing(void);
-uint8_t oled_set_horizontal_addressing(void);
 uint8_t oled_test(void);

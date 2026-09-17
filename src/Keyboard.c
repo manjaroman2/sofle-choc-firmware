@@ -51,13 +51,11 @@ int main(void)
   ERR_HANG(oled_init());
   ERR_HANG(oled_test());
 
-  // back to ram display
+  // back to ram display, then set the full frame window the background pump streams into
   ERR_HANG(oled_write_cmd(0xA4));
-  ERR_HANG(oled_flush());
-  
+  ERR_HANG(oled_select_range(0, OLED_COLS - 1, 0, OLED_PAGES - 1));
 
-  // clear disp
-  // ERR_HANG(oled_clear());
+  ERR_HANG(print_Text("Hello World!", 0));
 
   for(;;)
   {
@@ -65,19 +63,16 @@ int main(void)
     HID_Device_USBTask(&Generic_HID_Interface);
     USB_USBTask();
 
-    continue;
-    if(UsedKeyCodes == 0)
-    {
-      uint32_t time = micros();
-      if(time - oled_last_update >= 100000)
-      {
-        // ERR_HANG(oled_clear());
-        ERR_HANG(print_Text("Hello World!", oled_time % OLED_COLS));
-        ERR_HANG(oled_flush());
+    // never blocks: hands one 32 byte chunk to the twi isr when the bus is free
+    oled_task();
 
-        oled_time += 1;
-        oled_last_update = time;
-      }
+    if(micros() - oled_last_update >= 100000)
+    {
+      ERR_HANG(oled_clear());
+      ERR_HANG(print_Text("Hello World!", oled_time % OLED_COLS));
+
+      oled_time += 1;
+      oled_last_update = micros();
     }
   }
 }
@@ -251,12 +246,6 @@ bool CALLBACK_HID_Device_CreateHIDReport(USB_ClassInfo_HID_Device_t* const HIDIn
   else if(HIDInterfaceInfo == &Generic_HID_Interface)
   {
     *ReportSize = 0;
-  }
-  else
-  {
-    ERR_HANG(oled_clear());
-    ERR_HANG(print_Text("Hello World!", oled_time % OLED_COLS));
-    oled_time += 1;
   }
   return false;
 }

@@ -243,6 +243,18 @@ uint8_t twi_readFrom(uint8_t address, uint8_t* data, uint8_t length, uint8_t sen
 }
 
 /* 
+ * Function twi_is_busy
+ * Desc     reports whether a master transaction is still in flight
+ *          lets callers poll instead of blocking when wait is 0
+ * Input    none
+ * Output   true if the bus is not idle
+ */
+bool twi_is_busy(void)
+{
+  return twi_state != TWI_READY;
+}
+
+/* 
  * Function twi_writeTo
  * Desc     attempts to become twi bus master and write a
  *          series of bytes to a device on the bus
